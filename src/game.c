@@ -27,6 +27,23 @@ void game_init(GameState* game, int map_width, int map_height, GameMode mode) {
     }
 }
 
+// 检查位置是否与现有坦克重叠（带安全距离）
+static bool is_position_safe(GameState* game, float x, float y, float min_distance) {
+    for (int i = 0; i < game->tank_count; i++) {
+        if (!game->tanks[i].alive) continue;
+
+        float dx = game->tanks[i].x - x;
+        float dy = game->tanks[i].y - y;
+        float dist = sqrtf(dx * dx + dy * dy);
+
+        // 检查是否太近（考虑坦克大小和额外安全距离）
+        if (dist < (TANK_SIZE + min_distance)) {
+            return false;
+        }
+    }
+    return true;
+}
+
 // 重置游戏回合
 void game_reset(GameState* game, int enemy_count) {
     game->tank_count = 0;
@@ -46,33 +63,50 @@ void game_reset(GameState* game, int enemy_count) {
     tank_init(&game->tanks[0], ai_x, ai_y, TANK_TYPE_AI);
     game->tank_count = 1;
 
-    // 创建敌人坦克（在四周生成）
+    // 创建敌人坦克（在四周生成，避免重叠）
     for (int i = 0; i < enemy_count; i++) {
         float x, y;
-        int edge = rand() % 4;
+        int attempts = 0;
+        const int max_attempts = 50;  // 最多尝试50次
+        const float min_distance = TANK_SIZE * 1.5f;  // 最小间距为1.5倍坦克大小
+        bool found_position = false;
 
-        switch (edge) {
-            case 0: // 上边
-                x = rand() % (game->map_width - TANK_SIZE);
-                y = TANK_SIZE;
-                break;
-            case 1: // 下边
-                x = rand() % (game->map_width - TANK_SIZE);
-                y = game->map_height - TANK_SIZE * 2;
-                break;
-            case 2: // 左边
-                x = TANK_SIZE;
-                y = rand() % (game->map_height - TANK_SIZE);
-                break;
-            case 3: // 右边
-                x = game->map_width - TANK_SIZE * 2;
-                y = rand() % (game->map_height - TANK_SIZE);
-                break;
+        // 尝试找到一个不重叠的位置
+        while (attempts < max_attempts && !found_position) {
+            int edge = rand() % 4;
+
+            switch (edge) {
+                case 0: // 上边
+                    x = TANK_SIZE + rand() % (game->map_width - TANK_SIZE * 2);
+                    y = TANK_SIZE;
+                    break;
+                case 1: // 下边
+                    x = TANK_SIZE + rand() % (game->map_width - TANK_SIZE * 2);
+                    y = game->map_height - TANK_SIZE * 2;
+                    break;
+                case 2: // 左边
+                    x = TANK_SIZE;
+                    y = TANK_SIZE + rand() % (game->map_height - TANK_SIZE * 2);
+                    break;
+                case 3: // 右边
+                    x = game->map_width - TANK_SIZE * 2;
+                    y = TANK_SIZE + rand() % (game->map_height - TANK_SIZE * 2);
+                    break;
+            }
+
+            // 检查这个位置是否安全
+            if (is_position_safe(game, x, y, min_distance)) {
+                found_position = true;
+            }
+            attempts++;
         }
 
-        tank_init(&game->tanks[game->tank_count], x, y, TANK_TYPE_ENEMY);
-        enemy_ai_init(&game->enemy_ais[game->tank_count], &game->tanks[0]);
-        game->tank_count++;
+        // 如果找到了安全位置，创建坦克
+        if (found_position) {
+            tank_init(&game->tanks[game->tank_count], x, y, TANK_TYPE_ENEMY);
+            enemy_ai_init(&game->enemy_ais[game->tank_count], &game->tanks[0]);
+            game->tank_count++;
+        }
     }
 }
 
@@ -80,17 +114,35 @@ void game_reset(GameState* game, int enemy_count) {
 void game_add_enemy(GameState* game, TankType type, int model_version) {
     if (game->tank_count >= 32) return;
 
-    float x = rand() % (game->map_width - TANK_SIZE);
-    float y = rand() % (game->map_height - TANK_SIZE);
+    float x, y;
+    int attempts = 0;
+    const int max_attempts = 50;  // 最多尝试50次
+    const float min_distance = TANK_SIZE * 1.5f;  // 最小间距为1.5倍坦克大小
+    bool found_position = false;
 
-    tank_init(&game->tanks[game->tank_count], x, y, type);
-    tank_set_model_version(&game->tanks[game->tank_count], model_version);
+    // 尝试找到一个不重叠的位置
+    while (attempts < max_attempts && !found_position) {
+        x = TANK_SIZE + rand() % (game->map_width - TANK_SIZE * 2);
+        y = TANK_SIZE + rand() % (game->map_height - TANK_SIZE * 2);
 
-    if (type == TANK_TYPE_ENEMY) {
-        enemy_ai_init(&game->enemy_ais[game->tank_count], &game->tanks[0]);
+        // 检查这个位置是否安全
+        if (is_position_safe(game, x, y, min_distance)) {
+            found_position = true;
+        }
+        attempts++;
     }
 
-    game->tank_count++;
+    // 只有找到安全位置才添加坦克
+    if (found_position) {
+        tank_init(&game->tanks[game->tank_count], x, y, type);
+        tank_set_model_version(&game->tanks[game->tank_count], model_version);
+
+        if (type == TANK_TYPE_ENEMY) {
+            enemy_ai_init(&game->enemy_ais[game->tank_count], &game->tanks[0]);
+        }
+
+        game->tank_count++;
+    }
 }
 
 // 获取AI坦克
