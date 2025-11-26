@@ -128,24 +128,44 @@ static void render_tank(Renderer* r, Tank* tank) {
 
     SDL_RenderFillRect(r->renderer, &rect);
 
-    // 绘制方向指示（小矩形）
-    SDL_Rect dir_rect;
+    // 绘制炮筒（长线条）
+    int center_x = (int)tank->x + tank->width / 2;
+    int center_y = (int)tank->y + tank->height / 2;
+    int barrel_length = 20;  // 炮筒长度
+    int barrel_x1 = center_x;
+    int barrel_y1 = center_y;
+    int barrel_x2, barrel_y2;
+
     switch (tank->direction) {
         case DIR_UP:
-            dir_rect = (SDL_Rect){(int)tank->x + 12, (int)tank->y, 8, 4};
+            barrel_x2 = center_x;
+            barrel_y2 = center_y - barrel_length;
             break;
         case DIR_DOWN:
-            dir_rect = (SDL_Rect){(int)tank->x + 12, (int)tank->y + 28, 8, 4};
+            barrel_x2 = center_x;
+            barrel_y2 = center_y + barrel_length;
             break;
         case DIR_LEFT:
-            dir_rect = (SDL_Rect){(int)tank->x, (int)tank->y + 12, 4, 8};
+            barrel_x2 = center_x - barrel_length;
+            barrel_y2 = center_y;
             break;
         case DIR_RIGHT:
-            dir_rect = (SDL_Rect){(int)tank->x + 28, (int)tank->y + 12, 4, 8};
+            barrel_x2 = center_x + barrel_length;
+            barrel_y2 = center_y;
             break;
     }
+
+    // 绘制粗炮筒（绘制多条平行线实现粗线效果）
     SDL_SetRenderDrawColor(r->renderer, 255, 255, 0, 255);
-    SDL_RenderFillRect(r->renderer, &dir_rect);
+    for (int offset = -1; offset <= 1; offset++) {
+        if (tank->direction == DIR_UP || tank->direction == DIR_DOWN) {
+            SDL_RenderDrawLine(r->renderer, barrel_x1 + offset, barrel_y1,
+                             barrel_x2 + offset, barrel_y2);
+        } else {
+            SDL_RenderDrawLine(r->renderer, barrel_x1, barrel_y1 + offset,
+                             barrel_x2, barrel_y2 + offset);
+        }
+    }
 
     // 渲染血量条
     int bar_width = tank->width;

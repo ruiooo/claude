@@ -3,6 +3,7 @@
  */
 
 #include "tank.h"
+#include "collision.h"
 #include <stdlib.h>
 #include <string.h>
 
@@ -41,8 +42,9 @@ void tank_update(Tank* tank) {
     tank->vy *= 0.85f;
 }
 
-// 移动坦克（带边界检查）
-void tank_move(Tank* tank, Direction dir, int map_width, int map_height) {
+// 移动坦克（带边界检查和碰撞检测）
+void tank_move(Tank* tank, Direction dir, int map_width, int map_height,
+               Tank* all_tanks, int tank_count) {
     if (!tank->alive) return;
 
     tank->direction = dir;
@@ -74,13 +76,30 @@ void tank_move(Tank* tank, Direction dir, int map_width, int map_height) {
     }
 
     // 边界检查
-    if (new_x >= 0 && new_x + tank->width <= map_width) {
+    bool x_valid = (new_x >= 0 && new_x + tank->width <= map_width);
+    bool y_valid = (new_y >= 0 && new_y + tank->height <= map_height);
+
+    // 碰撞检测：检查新位置是否会与其他坦克碰撞
+    bool x_collision = false;
+    bool y_collision = false;
+
+    if (all_tanks && tank_count > 0) {
+        x_collision = check_tank_position_collision(new_x, tank->y,
+                                                    tank->width, tank->height,
+                                                    all_tanks, tank_count, tank->id);
+        y_collision = check_tank_position_collision(tank->x, new_y,
+                                                    tank->width, tank->height,
+                                                    all_tanks, tank_count, tank->id);
+    }
+
+    // 应用移动（只在没有碰撞和边界内时）
+    if (x_valid && !x_collision) {
         tank->x = new_x;
     } else {
         tank->vx = 0;
     }
 
-    if (new_y >= 0 && new_y + tank->height <= map_height) {
+    if (y_valid && !y_collision) {
         tank->y = new_y;
     } else {
         tank->vy = 0;

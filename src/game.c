@@ -125,16 +125,20 @@ void game_execute_action(GameState* game, int tank_id, TankAction action) {
         case ACTION_IDLE:
             break;
         case ACTION_MOVE_UP:
-            tank_move(tank, DIR_UP, game->map_width, game->map_height);
+            tank_move(tank, DIR_UP, game->map_width, game->map_height,
+                     game->tanks, game->tank_count);
             break;
         case ACTION_MOVE_DOWN:
-            tank_move(tank, DIR_DOWN, game->map_width, game->map_height);
+            tank_move(tank, DIR_DOWN, game->map_width, game->map_height,
+                     game->tanks, game->tank_count);
             break;
         case ACTION_MOVE_LEFT:
-            tank_move(tank, DIR_LEFT, game->map_width, game->map_height);
+            tank_move(tank, DIR_LEFT, game->map_width, game->map_height,
+                     game->tanks, game->tank_count);
             break;
         case ACTION_MOVE_RIGHT:
-            tank_move(tank, DIR_RIGHT, game->map_width, game->map_height);
+            tank_move(tank, DIR_RIGHT, game->map_width, game->map_height,
+                     game->tanks, game->tank_count);
             break;
         case ACTION_SHOOT_UP:
         case ACTION_SHOOT_DOWN:

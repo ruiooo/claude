@@ -53,14 +53,15 @@ typedef struct {
 
 // 常量
 #define TANK_SIZE 32
-#define TANK_SPEED 2.5f
+#define TANK_SPEED 1.8f
 #define TANK_MAX_HEALTH 3
 #define SHOOT_COOLDOWN 30  // 30帧约0.5秒（60fps）
 
 // 函数声明
 void tank_init(Tank* tank, float x, float y, TankType type);
 void tank_update(Tank* tank);
-void tank_move(Tank* tank, Direction dir, int map_width, int map_height);
+void tank_move(Tank* tank, Direction dir, int map_width, int map_height,
+               Tank* all_tanks, int tank_count);
 void tank_take_damage(Tank* tank, int damage);
 bool tank_can_shoot(Tank* tank);
 void tank_start_shoot_cooldown(Tank* tank);

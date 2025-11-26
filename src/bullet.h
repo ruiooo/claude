@@ -20,7 +20,7 @@ typedef struct {
 
 // 常量
 #define BULLET_SIZE 8
-#define BULLET_SPEED 5.0f
+#define BULLET_SPEED 3.5f
 #define MAX_BULLETS 100
 
 // 函数声明

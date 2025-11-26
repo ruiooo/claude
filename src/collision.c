@@ -22,6 +22,21 @@ bool check_tank_collision(Tank* t1, Tank* t2) {
                                 t2->x, t2->y, t2->width, t2->height);
 }
 
+// 检查坦克在指定位置是否会与其他坦克碰撞
+bool check_tank_position_collision(float x, float y, int width, int height,
+                                   Tank* tanks, int tank_count, int exclude_id) {
+    for (int i = 0; i < tank_count; i++) {
+        if (!tanks[i].alive || tanks[i].id == exclude_id) continue;
+
+        if (check_aabb_collision(x, y, width, height,
+                                tanks[i].x, tanks[i].y,
+                                tanks[i].width, tanks[i].height)) {
+            return true;
+        }
+    }
+    return false;
+}
+
 // 子弹和坦克的碰撞检测
 bool check_bullet_tank_collision(Bullet* bullet, Tank* tank) {
     if (!bullet->active || !tank->alive) return false;
