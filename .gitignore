@@ -1,0 +1,36 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+env/
+venv/
+ENV/
+
+# C
+*.o
+*.a
+build/
+*.out
+
+# 模型和日志
+saved_models/
+logs/
+*.pth
+*.log
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# 系统
+.DS_Store
+Thumbs.db
+
+# 可执行文件
+tank_battle_player
+libtankbattle.so
