@@ -64,9 +64,20 @@ install-python-deps:
 	pip install -r requirements.txt
 	@echo "Python依赖已安装"
 
-# 运行玩家模式
+# 运行玩家模式（对战简单AI）
 run-player: $(PLAYER_EXEC)
 	./$(PLAYER_EXEC)
+
+# 运行玩家对战AI模式（对战训练后的AI）
+run-player-vs-ai: $(SHARED_LIB)
+	@echo "玩家对战AI模式（需要pygame）"
+	@echo "如果没有安装pygame，运行: pip install pygame"
+	python3 python/play_vs_ai.py
+
+# 运行玩家对战多个AI
+run-player-vs-ai-3: $(SHARED_LIB)
+	@echo "玩家对战3个AI"
+	python3 python/play_vs_ai.py --enemies 3
 
 # 运行训练（纯文本模式）
 train:
@@ -84,17 +95,25 @@ train-continue:
 help:
 	@echo "Tank Battle AI Training System - Makefile"
 	@echo ""
-	@echo "可用命令:"
-	@echo "  make                  - 编译所有目标"
-	@echo "  make all              - 编译所有目标"
-	@echo "  make clean            - 清理构建文件"
-	@echo "  make rebuild          - 重新编译"
-	@echo "  make install-deps     - 安装C依赖（需要sudo）"
+	@echo "编译命令:"
+	@echo "  make                     - 编译所有目标"
+	@echo "  make all                 - 编译所有目标"
+	@echo "  make clean               - 清理构建文件"
+	@echo "  make rebuild             - 重新编译"
+	@echo ""
+	@echo "安装命令:"
+	@echo "  make install-deps        - 安装C依赖（需要sudo）"
 	@echo "  make install-python-deps - 安装Python依赖"
-	@echo "  make run-player       - 运行玩家对战模式"
-	@echo "  make train            - 运行训练（纯文本模式）"
-	@echo "  make train-vis        - 运行训练（可视化模式）"
-	@echo "  make train-continue   - 继续训练"
+	@echo ""
+	@echo "游戏模式:"
+	@echo "  make run-player          - 玩家对战简单AI"
+	@echo "  make run-player-vs-ai    - 玩家对战训练后的AI（1个）"
+	@echo "  make run-player-vs-ai-3  - 玩家对战训练后的AI（3个）"
+	@echo ""
+	@echo "训练模式:"
+	@echo "  make train               - 运行训练（纯文本模式）"
+	@echo "  make train-vis           - 运行训练（可视化模式）"
+	@echo "  make train-continue      - 继续训练"
 	@echo ""
 
-.PHONY: all clean rebuild install-deps install-python-deps run-player train train-vis train-continue help
+.PHONY: all clean rebuild install-deps install-python-deps run-player run-player-vs-ai run-player-vs-ai-3 train train-vis train-continue help

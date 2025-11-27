@@ -48,15 +48,44 @@ if $HAS_CUDA; then
     fi
 fi
 
-# 安装C依赖
+# 检查并安装C依赖
 echo ""
-echo "安装C依赖 (SDL2)..."
-if command -v apt-get &> /dev/null; then
-    sudo apt-get update
-    sudo apt-get install -y libsdl2-dev libsdl2-ttf-dev gcc make
-    echo "✓ C依赖安装完成"
+echo "检查C依赖 (SDL2)..."
+
+# 检查SDL2是否已安装
+SDL2_INSTALLED=false
+if pkg-config --exists sdl2 sdl2_ttf 2>/dev/null; then
+    SDL2_VERSION=$(pkg-config --modversion sdl2)
+    SDL2_TTF_VERSION=$(pkg-config --modversion sdl2_ttf)
+    echo "✓ SDL2已安装: $SDL2_VERSION"
+    echo "✓ SDL2_ttf已安装: $SDL2_TTF_VERSION"
+    SDL2_INSTALLED=true
+elif command -v sdl2-config &> /dev/null; then
+    SDL2_VERSION=$(sdl2-config --version)
+    echo "✓ SDL2已安装: $SDL2_VERSION"
+    SDL2_INSTALLED=true
+fi
+
+# 检查GCC和Make
+if command -v gcc &> /dev/null && command -v make &> /dev/null; then
+    GCC_VERSION=$(gcc --version | head -n1)
+    echo "✓ GCC已安装: $GCC_VERSION"
 else
-    echo "⚠ 无法自动安装SDL2，请手动安装"
+    SDL2_INSTALLED=false
+fi
+
+# 如果未安装，则安装
+if ! $SDL2_INSTALLED; then
+    echo "安装C依赖..."
+    if command -v apt-get &> /dev/null; then
+        sudo apt-get update
+        sudo apt-get install -y libsdl2-dev libsdl2-ttf-dev gcc make
+        echo "✓ C依赖安装完成"
+    else
+        echo "⚠ 无法自动安装SDL2，请手动安装"
+    fi
+else
+    echo "✓ 所有C依赖已就绪，跳过安装"
 fi
 
 # 安装Python依赖
@@ -111,9 +140,14 @@ echo "  安装完成!"
 echo "========================================"
 echo ""
 echo "快速开始:"
-echo "  1. 训练AI (纯文本模式):   make train"
-echo "  2. 训练AI (可视化模式):   make train-vis"
-echo "  3. 玩家对战模式:          make run-player"
+echo "  1. 训练AI (纯文本模式):        make train"
+echo "  2. 训练AI (可视化模式):        make train-vis"
+echo "  3. 玩家对战简单AI:             make run-player"
+echo "  4. 玩家对战训练后的AI:         make run-player-vs-ai"
 echo ""
+echo "注意: 玩家对战AI模式需要安装pygame:"
+echo "  pip install pygame"
+echo ""
+echo "更多命令请运行: make help"
 echo "详细文档请参阅 README.md"
 echo ""
