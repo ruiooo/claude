@@ -27,21 +27,16 @@ typedef struct {
 } PlayerControl;
 
 // 处理键盘输入并返回动作
-TankAction get_player_action(PlayerControl* control, const Uint8* keyboard_state) {
-    // 射击优先
+TankAction get_player_action(PlayerControl* control, const Uint8* keyboard_state, Tank* player_tank) {
+    // 射击优先 - 空格键直接在当前方向开炮
     if (keyboard_state[SDL_GetScancodeFromKey(control->key_shoot)]) {
-        // 根据移动键判断射击方向
-        if (keyboard_state[SDL_GetScancodeFromKey(control->key_up)]) {
-            return ACTION_SHOOT_UP;
-        } else if (keyboard_state[SDL_GetScancodeFromKey(control->key_down)]) {
-            return ACTION_SHOOT_DOWN;
-        } else if (keyboard_state[SDL_GetScancodeFromKey(control->key_left)]) {
-            return ACTION_SHOOT_LEFT;
-        } else if (keyboard_state[SDL_GetScancodeFromKey(control->key_right)]) {
-            return ACTION_SHOOT_RIGHT;
+        // 根据坦克当前朝向射击
+        switch (player_tank->direction) {
+            case DIR_UP: return ACTION_SHOOT_UP;
+            case DIR_DOWN: return ACTION_SHOOT_DOWN;
+            case DIR_LEFT: return ACTION_SHOOT_LEFT;
+            case DIR_RIGHT: return ACTION_SHOOT_RIGHT;
         }
-        // 如果没有方向键，根据当前方向射击
-        return ACTION_SHOOT_UP;  // 默认向上
     }
 
     // 移动
@@ -193,8 +188,11 @@ int main(int argc, char* argv[]) {
         // 获取键盘状态
         const Uint8* keyboard_state = SDL_GetKeyboardState(NULL);
 
+        // 获取本地玩家坦克
+        Tank* local_tank = &game.tanks[local_control.tank_id];
+
         // 获取本地玩家动作
-        TankAction local_action = get_player_action(&local_control, keyboard_state);
+        TankAction local_action = get_player_action(&local_control, keyboard_state, local_tank);
 
         // 发送本地动作到对方
         network_send_action(&net_conn, local_action);

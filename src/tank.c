@@ -36,9 +36,16 @@ void tank_update(Tank* tank) {
     tank->x += tank->vx;
     tank->y += tank->vy;
 
-    // 平滑衰减速度 - 改为更缓慢的衰减
-    tank->vx *= 0.95f;
-    tank->vy *= 0.95f;
+    // 平滑衰减速度 - 玩家坦克快速停止，AI/敌人坦克平滑移动
+    if (tank->type == TANK_TYPE_PLAYER || tank->type == TANK_TYPE_PLAYER2) {
+        // 玩家坦克：快速停止，无滑行感
+        tank->vx *= 0.5f;
+        tank->vy *= 0.5f;
+    } else {
+        // AI和敌人坦克：平滑移动
+        tank->vx *= 0.95f;
+        tank->vy *= 0.95f;
+    }
 
     // 速度太小时归零，避免持续微小抖动
     if (tank->vx > -0.1f && tank->vx < 0.1f) tank->vx = 0;
