@@ -59,24 +59,37 @@ else
     echo "⚠ 无法自动安装SDL2，请手动安装"
 fi
 
-# 安装Python依赖
+# 检查并安装Python依赖
 echo ""
-echo "安装Python依赖..."
+echo "检查Python依赖..."
 
-# 安装PyTorch
-if $HAS_CUDA; then
-    echo "安装PyTorch (CUDA版本)..."
-    pip3 install torch torchvision --index-url https://download.pytorch.org/whl/cu121
+# 检查PyTorch是否已安装
+if python3 -c "import torch" 2>/dev/null; then
+    TORCH_VERSION=$(python3 -c "import torch; print(torch.__version__)" 2>/dev/null)
+    echo "✓ PyTorch已安装: $TORCH_VERSION"
 else
-    echo "安装PyTorch (CPU版本)..."
-    pip3 install torch torchvision
+    echo "安装PyTorch..."
+    if $HAS_CUDA; then
+        echo "安装PyTorch (CUDA版本)..."
+        pip3 install torch torchvision --index-url https://download.pytorch.org/whl/cu121
+    else
+        echo "安装PyTorch (CPU版本)..."
+        pip3 install torch torchvision
+    fi
+    echo "✓ PyTorch安装完成"
 fi
 
-# 安装其他依赖
-echo "安装其他Python包..."
-pip3 install numpy
+# 检查NumPy是否已安装
+if python3 -c "import numpy" 2>/dev/null; then
+    NUMPY_VERSION=$(python3 -c "import numpy; print(numpy.__version__)" 2>/dev/null)
+    echo "✓ NumPy已安装: $NUMPY_VERSION"
+else
+    echo "安装NumPy..."
+    pip3 install numpy
+    echo "✓ NumPy安装完成"
+fi
 
-echo "✓ Python依赖安装完成"
+echo "✓ Python依赖检查完成"
 
 # 编译C代码
 echo ""

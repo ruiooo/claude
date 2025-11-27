@@ -14,16 +14,17 @@ LIB_DIR = .
 SOURCES = $(wildcard $(SRC_DIR)/*.c)
 OBJECTS = $(SOURCES:$(SRC_DIR)/%.c=$(BUILD_DIR)/%.o)
 
-# 排除main.c用于共享库
-LIB_SOURCES = $(filter-out $(SRC_DIR)/main.c, $(SOURCES))
+# 排除main.c和multiplayer_main.c用于共享库
+LIB_SOURCES = $(filter-out $(SRC_DIR)/main.c $(SRC_DIR)/multiplayer_main.c, $(SOURCES))
 LIB_OBJECTS = $(LIB_SOURCES:$(SRC_DIR)/%.c=$(BUILD_DIR)/%.o)
 
 # 输出文件
 SHARED_LIB = $(LIB_DIR)/libtankbattle.so
 PLAYER_EXEC = tank_battle_player
+MULTIPLAYER_EXEC = tank_battle_multiplayer
 
 # 默认目标
-all: $(SHARED_LIB) $(PLAYER_EXEC)
+all: $(SHARED_LIB) $(PLAYER_EXEC) $(MULTIPLAYER_EXEC)
 
 # 创建构建目录
 $(BUILD_DIR):
@@ -39,15 +40,21 @@ $(SHARED_LIB): $(LIB_OBJECTS)
 	@echo "共享库已创建: $(SHARED_LIB)"
 
 # 创建玩家可执行文件
-$(PLAYER_EXEC): $(OBJECTS)
+$(PLAYER_EXEC): $(filter-out $(BUILD_DIR)/multiplayer_main.o, $(OBJECTS))
 	$(CC) -o $@ $^ -lSDL2 -lSDL2_ttf -lm
 	@echo "玩家程序已创建: $(PLAYER_EXEC)"
+
+# 创建多人对战可执行文件
+$(MULTIPLAYER_EXEC): $(filter-out $(BUILD_DIR)/main.o, $(OBJECTS))
+	$(CC) -o $@ $^ -lSDL2 -lSDL2_ttf -lm
+	@echo "多人对战程序已创建: $(MULTIPLAYER_EXEC)"
 
 # 清理
 clean:
 	rm -rf $(BUILD_DIR)
 	rm -f $(SHARED_LIB)
 	rm -f $(PLAYER_EXEC)
+	rm -f $(MULTIPLAYER_EXEC)
 	@echo "清理完成"
 
 # 重新编译
@@ -67,6 +74,15 @@ install-python-deps:
 # 运行玩家模式
 run-player: $(PLAYER_EXEC)
 	./$(PLAYER_EXEC)
+
+# 运行多人对战模式 - 服务器
+run-multiplayer-server: $(MULTIPLAYER_EXEC)
+	./$(MULTIPLAYER_EXEC) server
+
+# 运行多人对战模式 - 客户端
+run-multiplayer-client: $(MULTIPLAYER_EXEC)
+	@echo "请输入服务器IP地址，然后运行："
+	@echo "  ./$(MULTIPLAYER_EXEC) client <服务器IP>"
 
 # 运行训练（纯文本模式）
 train:
@@ -92,9 +108,11 @@ help:
 	@echo "  make install-deps     - 安装C依赖（需要sudo）"
 	@echo "  make install-python-deps - 安装Python依赖"
 	@echo "  make run-player       - 运行玩家对战模式"
+	@echo "  make run-multiplayer-server  - 运行多人对战（服务器）"
+	@echo "  make run-multiplayer-client  - 运行多人对战（客户端）"
 	@echo "  make train            - 运行训练（纯文本模式）"
 	@echo "  make train-vis        - 运行训练（可视化模式）"
 	@echo "  make train-continue   - 继续训练"
 	@echo ""
 
-.PHONY: all clean rebuild install-deps install-python-deps run-player train train-vis train-continue help
+.PHONY: all clean rebuild install-deps install-python-deps run-player run-multiplayer-server run-multiplayer-client train train-vis train-continue help

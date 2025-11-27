@@ -121,31 +121,58 @@ static void render_tank(Renderer* r, Tank* tank) {
             SDL_SetRenderDrawColor(r->renderer, 255, 150, 150, 255);
             break;
         case TANK_TYPE_PLAYER:
-            // 绿色（玩家）
+            // 绿色（玩家1）
             SDL_SetRenderDrawColor(r->renderer, 50, 255, 50, 255);
+            break;
+        case TANK_TYPE_PLAYER2:
+            // 深绿色（玩家2）
+            SDL_SetRenderDrawColor(r->renderer, 0, 150, 50, 255);
             break;
     }
 
     SDL_RenderFillRect(r->renderer, &rect);
 
-    // 绘制方向指示（小矩形）
-    SDL_Rect dir_rect;
+    // 绘制炮筒（长方形）
+    SDL_Rect barrel_rect;
+    int barrel_length = 16;  // 炮筒长度
+    int barrel_width = 6;    // 炮筒宽度
+
     switch (tank->direction) {
         case DIR_UP:
-            dir_rect = (SDL_Rect){(int)tank->x + 12, (int)tank->y, 8, 4};
+            barrel_rect = (SDL_Rect){
+                (int)tank->x + (tank->width - barrel_width) / 2,
+                (int)tank->y - barrel_length,
+                barrel_width,
+                barrel_length
+            };
             break;
         case DIR_DOWN:
-            dir_rect = (SDL_Rect){(int)tank->x + 12, (int)tank->y + 28, 8, 4};
+            barrel_rect = (SDL_Rect){
+                (int)tank->x + (tank->width - barrel_width) / 2,
+                (int)tank->y + tank->height,
+                barrel_width,
+                barrel_length
+            };
             break;
         case DIR_LEFT:
-            dir_rect = (SDL_Rect){(int)tank->x, (int)tank->y + 12, 4, 8};
+            barrel_rect = (SDL_Rect){
+                (int)tank->x - barrel_length,
+                (int)tank->y + (tank->height - barrel_width) / 2,
+                barrel_length,
+                barrel_width
+            };
             break;
         case DIR_RIGHT:
-            dir_rect = (SDL_Rect){(int)tank->x + 28, (int)tank->y + 12, 4, 8};
+            barrel_rect = (SDL_Rect){
+                (int)tank->x + tank->width,
+                (int)tank->y + (tank->height - barrel_width) / 2,
+                barrel_length,
+                barrel_width
+            };
             break;
     }
     SDL_SetRenderDrawColor(r->renderer, 255, 255, 0, 255);
-    SDL_RenderFillRect(r->renderer, &dir_rect);
+    SDL_RenderFillRect(r->renderer, &barrel_rect);
 
     // 渲染血量条
     int bar_width = tank->width;

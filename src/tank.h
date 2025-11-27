@@ -12,7 +12,8 @@ typedef enum {
     TANK_TYPE_AI,           // AI控制的坦克（蓝色）
     TANK_TYPE_ENEMY,        // 追踪型敌人（红色）
     TANK_TYPE_SELF_PLAY,    // 历史版本AI敌人（红白色）
-    TANK_TYPE_PLAYER        // 玩家控制
+    TANK_TYPE_PLAYER,       // 玩家1控制（绿色）
+    TANK_TYPE_PLAYER2       // 玩家2控制（深绿色）
 } TankType;
 
 // 坦克动作

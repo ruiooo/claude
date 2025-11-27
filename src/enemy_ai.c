@@ -79,6 +79,19 @@ bool enemy_ai_try_shoot(EnemyAI* ai, Tank* enemy_tank, Tank* target) {
 static Direction get_best_direction(Tank* enemy_tank, Tank* target) {
     float dx = target->x - enemy_tank->x;
     float dy = target->y - enemy_tank->y;
+    float dist = sqrtf(dx * dx + dy * dy);
+
+    // 保持最小距离（100像素），防止贴到AI坦克上
+    const float MIN_DISTANCE = 100.0f;
+
+    if (dist < MIN_DISTANCE) {
+        // 距离太近，向相反方向移动
+        if (fabs(dx) > fabs(dy)) {
+            return dx > 0 ? DIR_LEFT : DIR_RIGHT;
+        } else {
+            return dy > 0 ? DIR_UP : DIR_DOWN;
+        }
+    }
 
     // 选择距离较大的轴优先移动
     if (fabs(dx) > fabs(dy)) {
