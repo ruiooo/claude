@@ -48,15 +48,68 @@ if $HAS_CUDA; then
     fi
 fi
 
-# 安装C依赖
+# 检查并安装C依赖
 echo ""
-echo "安装C依赖 (SDL2)..."
-if command -v apt-get &> /dev/null; then
-    sudo apt-get update
-    sudo apt-get install -y libsdl2-dev libsdl2-ttf-dev gcc make
-    echo "✓ C依赖安装完成"
+echo "检查C依赖 (SDL2)..."
+
+# 检查SDL2是否已安装
+SDL2_INSTALLED=false
+if pkg-config --exists sdl2 2>/dev/null; then
+    SDL2_VERSION=$(pkg-config --modversion sdl2)
+    echo "✓ SDL2已安装: $SDL2_VERSION"
+    SDL2_INSTALLED=true
+fi
+
+# 检查SDL2_ttf是否已安装
+SDL2_TTF_INSTALLED=false
+if pkg-config --exists SDL2_ttf 2>/dev/null; then
+    SDL2_TTF_VERSION=$(pkg-config --modversion SDL2_ttf)
+    echo "✓ SDL2_ttf已安装: $SDL2_TTF_VERSION"
+    SDL2_TTF_INSTALLED=true
+fi
+
+# 检查gcc是否已安装
+GCC_INSTALLED=false
+if command -v gcc &> /dev/null; then
+    GCC_VERSION=$(gcc --version | head -n1)
+    echo "✓ GCC已安装: $GCC_VERSION"
+    GCC_INSTALLED=true
+fi
+
+# 检查make是否已安装
+MAKE_INSTALLED=false
+if command -v make &> /dev/null; then
+    MAKE_VERSION=$(make --version | head -n1)
+    echo "✓ Make已安装: $MAKE_VERSION"
+    MAKE_INSTALLED=true
+fi
+
+# 安装缺少的依赖
+if ! $SDL2_INSTALLED || ! $SDL2_TTF_INSTALLED || ! $GCC_INSTALLED || ! $MAKE_INSTALLED; then
+    if command -v apt-get &> /dev/null; then
+        echo "安装缺少的C依赖..."
+        PACKAGES=""
+        if ! $SDL2_INSTALLED; then
+            PACKAGES="$PACKAGES libsdl2-dev"
+        fi
+        if ! $SDL2_TTF_INSTALLED; then
+            PACKAGES="$PACKAGES libsdl2-ttf-dev"
+        fi
+        if ! $GCC_INSTALLED; then
+            PACKAGES="$PACKAGES gcc"
+        fi
+        if ! $MAKE_INSTALLED; then
+            PACKAGES="$PACKAGES make"
+        fi
+
+        sudo apt-get update
+        sudo apt-get install -y $PACKAGES
+        echo "✓ C依赖安装完成"
+    else
+        echo "⚠ 无法自动安装SDL2，请手动安装"
+    fi
 else
-    echo "⚠ 无法自动安装SDL2，请手动安装"
+    echo "✓ 所有C依赖已安装"
 fi
 
 # 检查并安装Python依赖

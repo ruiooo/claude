@@ -132,41 +132,43 @@ static void render_tank(Renderer* r, Tank* tank) {
 
     SDL_RenderFillRect(r->renderer, &rect);
 
-    // 绘制炮筒（长方形）
+    // 绘制炮筒（长方形，一部分在坦克上，一部分在坦克外）
     SDL_Rect barrel_rect;
-    int barrel_length = 16;  // 炮筒长度
-    int barrel_width = 6;    // 炮筒宽度
+    int barrel_total_length = 20;  // 炮筒总长度
+    int barrel_width = 6;          // 炮筒宽度
+    int barrel_inside = 8;         // 炮筒在坦克内的长度
+    int barrel_outside = barrel_total_length - barrel_inside;  // 炮筒在坦克外的长度
 
     switch (tank->direction) {
         case DIR_UP:
             barrel_rect = (SDL_Rect){
                 (int)tank->x + (tank->width - barrel_width) / 2,
-                (int)tank->y - barrel_length,
+                (int)tank->y - barrel_outside,
                 barrel_width,
-                barrel_length
+                barrel_total_length
             };
             break;
         case DIR_DOWN:
             barrel_rect = (SDL_Rect){
                 (int)tank->x + (tank->width - barrel_width) / 2,
-                (int)tank->y + tank->height,
+                (int)tank->y + tank->height - barrel_inside,
                 barrel_width,
-                barrel_length
+                barrel_total_length
             };
             break;
         case DIR_LEFT:
             barrel_rect = (SDL_Rect){
-                (int)tank->x - barrel_length,
+                (int)tank->x - barrel_outside,
                 (int)tank->y + (tank->height - barrel_width) / 2,
-                barrel_length,
+                barrel_total_length,
                 barrel_width
             };
             break;
         case DIR_RIGHT:
             barrel_rect = (SDL_Rect){
-                (int)tank->x + tank->width,
+                (int)tank->x + tank->width - barrel_inside,
                 (int)tank->y + (tank->height - barrel_width) / 2,
-                barrel_length,
+                barrel_total_length,
                 barrel_width
             };
             break;
