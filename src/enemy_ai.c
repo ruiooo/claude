@@ -47,7 +47,7 @@ bool enemy_ai_try_shoot(EnemyAI* ai, Tank* enemy_tank, Tank* target) {
     float dist = sqrtf(dx * dx + dy * dy);
 
     // 射程内
-    if (dist < 300.0f) {
+    if (dist < 500.0f) {
         // 判断是否在射击线上（带一定容错）
         float tolerance = 40.0f;
 

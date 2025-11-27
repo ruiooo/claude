@@ -27,27 +27,30 @@ void bullet_fire(Bullet* bullet, Tank* tank) {
     bullet->owner_type = tank->type;
 
     // 根据坦克朝向设置子弹位置和速度
+    // 炮筒长度：16像素
+    #define BARREL_LENGTH 16
+
     switch (tank->direction) {
         case DIR_UP:
             bullet->x = tank->x + tank->width / 2 - BULLET_SIZE / 2;
-            bullet->y = tank->y - BULLET_SIZE;
+            bullet->y = tank->y - BULLET_SIZE - BARREL_LENGTH;
             bullet->vx = 0;
             bullet->vy = -BULLET_SPEED;
             break;
         case DIR_DOWN:
             bullet->x = tank->x + tank->width / 2 - BULLET_SIZE / 2;
-            bullet->y = tank->y + tank->height;
+            bullet->y = tank->y + tank->height + BARREL_LENGTH;
             bullet->vx = 0;
             bullet->vy = BULLET_SPEED;
             break;
         case DIR_LEFT:
-            bullet->x = tank->x - BULLET_SIZE;
+            bullet->x = tank->x - BULLET_SIZE - BARREL_LENGTH;
             bullet->y = tank->y + tank->height / 2 - BULLET_SIZE / 2;
             bullet->vx = -BULLET_SPEED;
             bullet->vy = 0;
             break;
         case DIR_RIGHT:
-            bullet->x = tank->x + tank->width;
+            bullet->x = tank->x + tank->width + BARREL_LENGTH;
             bullet->y = tank->y + tank->height / 2 - BULLET_SIZE / 2;
             bullet->vx = BULLET_SPEED;
             bullet->vy = 0;

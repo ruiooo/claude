@@ -53,7 +53,7 @@ typedef struct {
 
 // 常量
 #define TANK_SIZE 32
-#define TANK_SPEED 2.5f
+#define TANK_SPEED 1.8f
 #define TANK_MAX_HEALTH 3
 #define SHOOT_COOLDOWN 30  // 30帧约0.5秒（60fps）
 
