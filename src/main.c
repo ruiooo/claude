@@ -208,12 +208,12 @@ int main(int argc, char* argv[]) {
                     printf("  最终连胜: %d 局\n", progress.wins);
                     printf("  最高AI数量: %d\n", progress.current_ai_count);
                     printf("========================================\n");
-                    snprintf(progress.message, sizeof(progress->message),
+                    snprintf(progress.message, sizeof(progress.message),
                              "VICTORY! You defeated all challenges!");
                 } else {
                     // 准备下一回合
                     progress.current_ai_count++;
-                    snprintf(progress.message, sizeof(progress->message),
+                    snprintf(progress.message, sizeof(progress.message),
                              "Round %d WIN! Next: %d AI tanks",
                              progress.wins, progress.current_ai_count);
                 }
@@ -225,7 +225,7 @@ int main(int argc, char* argv[]) {
                 printf("  最终成绩: 连胜 %d 局\n", progress.wins);
                 printf("  最高AI数量: %d\n", progress.current_ai_count);
                 printf("========================================\n");
-                snprintf(progress.message, sizeof(progress->message),
+                snprintf(progress.message, sizeof(progress.message),
                          "GAME OVER - Final Score: %d wins", progress.wins);
             }
         }
