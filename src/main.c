@@ -174,6 +174,10 @@ int main(int argc, char* argv[]) {
                 TankAction action = get_player_input(keys, player_tank);
                 if (action != ACTION_IDLE) {
                     game_execute_action(&game, player_id, action);
+                } else {
+                    // 没有输入时立即停止移动
+                    player_tank->vx = 0;
+                    player_tank->vy = 0;
                 }
             }
 
