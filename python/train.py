@@ -4,7 +4,6 @@ train.py - 主训练脚本（支持GPU加速和两种显示模式）
 使用方法:
     python train.py --visualize          # 可视化训练
     python train.py --no-visualize       # 纯文本训练
-    python train.py --continue model.pth # 继续训练
 """
 
 import argparse
@@ -13,12 +12,76 @@ import time
 import numpy as np
 import torch
 from datetime import datetime
+import glob
 
 from config import *
 from model import DQNAgent
 from replay_buffer import ReplayBuffer
 from env_wrapper import TankBattleEnv
 from enemy_manager import EnemyManager
+
+
+def select_model_interactively():
+    """
+    交互式选择模型：新建或继续训练
+
+    Returns:
+        str: 模型路径，如果新建则返回None
+    """
+    print("\n" + "="*60)
+    print("模型选择")
+    print("="*60)
+
+    # 检查是否有可用的模型
+    model_files = []
+    if os.path.exists(PATHS['models']):
+        model_files = glob.glob(os.path.join(PATHS['models'], '*.pth'))
+        model_files.sort(key=os.path.getmtime, reverse=True)  # 按修改时间排序
+
+    # 检查checkpoints目录
+    checkpoint_files = []
+    if os.path.exists(PATHS['checkpoints']):
+        checkpoint_files = glob.glob(os.path.join(PATHS['checkpoints'], '*.pth'))
+        checkpoint_files.sort(key=os.path.getmtime, reverse=True)
+
+    all_files = model_files + checkpoint_files
+
+    if not all_files:
+        print("未找到已有模型，将创建新模型")
+        return None
+
+    print("\n请选择:")
+    print("  [0] 创建新模型")
+    print("\n可用的模型:")
+
+    for i, model_path in enumerate(all_files, 1):
+        file_size = os.path.getsize(model_path) / (1024 * 1024)  # MB
+        mod_time = datetime.fromtimestamp(os.path.getmtime(model_path))
+        print(f"  [{i}] {os.path.basename(model_path)}")
+        print(f"      大小: {file_size:.2f} MB | 修改时间: {mod_time.strftime('%Y-%m-%d %H:%M:%S')}")
+
+    print("\n" + "="*60)
+
+    while True:
+        try:
+            choice = input("请输入选项 (0-%d): " % len(all_files))
+            choice = int(choice)
+
+            if choice == 0:
+                print("✓ 将创建新模型")
+                return None
+            elif 1 <= choice <= len(all_files):
+                selected_model = all_files[choice - 1]
+                print(f"✓ 将从 {os.path.basename(selected_model)} 继续训练")
+                return selected_model
+            else:
+                print("⚠ 无效选项，请重新输入")
+        except (ValueError, KeyboardInterrupt):
+            print("\n⚠ 已取消，将创建新模型")
+            return None
+        except EOFError:
+            print("\n⚠ 已取消，将创建新模型")
+            return None
 
 
 class Trainer:
@@ -295,15 +358,16 @@ def main():
                        help='启用可视化训练模式')
     parser.add_argument('--no-visualize', action='store_true',
                        help='使用纯文本训练模式（默认）')
-    parser.add_argument('--continue', dest='continue_from', type=str,
-                       help='从已有模型继续训练')
     args = parser.parse_args()
 
     # 确定是否可视化
     visualize = args.visualize and not args.no_visualize
 
+    # 交互式选择模型
+    continue_from = select_model_interactively()
+
     # 创建训练器并开始训练
-    trainer = Trainer(visualize=visualize, continue_from=args.continue_from)
+    trainer = Trainer(visualize=visualize, continue_from=continue_from)
     trainer.train()
 
 
