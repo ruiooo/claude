@@ -2,7 +2,9 @@
 
 # 编译器设置
 CC = gcc
-CFLAGS = -Wall -O3 -fPIC -std=c11
+PYTHON_INCLUDES = $(shell python3-config --includes)
+PYTHON_LDFLAGS = $(shell python3-config --ldflags --embed 2>/dev/null || python3-config --ldflags)
+CFLAGS = -Wall -O3 -fPIC -std=c11 $(PYTHON_INCLUDES)
 LDFLAGS = -lSDL2 -lSDL2_ttf -lm -shared
 
 # 目录
@@ -39,9 +41,9 @@ $(SHARED_LIB): $(LIB_OBJECTS)
 	$(CC) -shared -o $@ $^ -lSDL2 -lSDL2_ttf -lm
 	@echo "共享库已创建: $(SHARED_LIB)"
 
-# 创建玩家可执行文件
+# 创建玩家可执行文件（需要Python支持）
 $(PLAYER_EXEC): $(filter-out $(BUILD_DIR)/multiplayer_main.o, $(OBJECTS))
-	$(CC) -o $@ $^ -lSDL2 -lSDL2_ttf -lm
+	$(CC) -o $@ $^ -lSDL2 -lSDL2_ttf -lm $(PYTHON_LDFLAGS)
 	@echo "玩家程序已创建: $(PLAYER_EXEC)"
 
 # 创建多人对战可执行文件
@@ -92,10 +94,6 @@ train:
 train-vis:
 	python3 python/train.py --visualize
 
-# 继续训练
-train-continue:
-	python3 python/train.py --continue saved_models/latest_model.pth
-
 # 帮助
 help:
 	@echo "Tank Battle AI Training System - Makefile"
@@ -110,9 +108,10 @@ help:
 	@echo "  make run-player       - 运行玩家对战模式"
 	@echo "  make run-multiplayer-server  - 运行多人对战（服务器）"
 	@echo "  make run-multiplayer-client  - 运行多人对战（客户端）"
-	@echo "  make train            - 运行训练（纯文本模式）"
-	@echo "  make train-vis        - 运行训练（可视化模式）"
-	@echo "  make train-continue   - 继续训练"
+	@echo "  make train            - 运行训练（纯文本模式，自动提示选择模型）"
+	@echo "  make train-vis        - 运行训练（可视化模式，自动提示选择模型）"
+	@echo ""
+	@echo "注意: 运行玩家对战模式时，会自动提示选择AI模型版本"
 	@echo ""
 
-.PHONY: all clean rebuild install-deps install-python-deps run-player run-multiplayer-server run-multiplayer-client train train-vis train-continue help
+.PHONY: all clean rebuild install-deps install-python-deps run-player run-multiplayer-server run-multiplayer-client train train-vis help

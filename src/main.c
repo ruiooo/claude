@@ -6,13 +6,16 @@
 #include <stdlib.h>
 #include <stdbool.h>
 #include <time.h>
+#include <string.h>
 #include "game.h"
 #include "rendering.h"
+#include "model_ai.h"
 
 #define WINDOW_WIDTH 800
 #define WINDOW_HEIGHT 600
 #define FPS 60
 #define WIN_TARGET 10  // 连胜10局获胜
+#define MAX_AI_TANKS 10
 
 // 游戏状态跟踪
 typedef struct {
@@ -20,6 +23,8 @@ typedef struct {
     int current_ai_count;    // 当前AI坦克数量
     bool game_active;        // 当前回合是否进行中
     char message[256];       // 显示消息
+    ModelAI ai_models[MAX_AI_TANKS];  // AI模型实例
+    char model_path[256];    // 选定的模型路径
 } GameProgress;
 
 // 处理玩家输入并返回动作
@@ -51,7 +56,8 @@ TankAction get_player_input(const Uint8* keys, Tank* player_tank) {
 // 开始新回合
 void start_new_round(GameState* game, GameProgress* progress) {
     printf("\n========== 第 %d 局 ==========\n", progress->wins + 1);
-    printf("AI坦克数量: %d\n", progress->current_ai_count);
+    printf("AI坦克数量: %d (使用模型: %s)\n",
+           progress->current_ai_count, progress->model_path);
 
     snprintf(progress->message, sizeof(progress->message),
              "Round %d - AI Tanks: %d | Wins: %d/%d",
@@ -66,8 +72,15 @@ void start_new_round(GameState* game, GameProgress* progress) {
     game->tanks[0].y = WINDOW_HEIGHT / 2;
     game->tank_count = 1;
 
-    // 创建AI训练模型控制的坦克（蓝色，使用AI类型）
-    for (int i = 0; i < progress->current_ai_count; i++) {
+    // 清理旧的AI模型实例
+    for (int i = 0; i < MAX_AI_TANKS; i++) {
+        if (progress->ai_models[i].initialized) {
+            model_ai_cleanup(&progress->ai_models[i]);
+        }
+    }
+
+    // 创建AI训练模型控制的坦克
+    for (int i = 0; i < progress->current_ai_count && i < MAX_AI_TANKS; i++) {
         float x, y;
         int edge = rand() % 4;
 
@@ -91,7 +104,12 @@ void start_new_round(GameState* game, GameProgress* progress) {
         }
 
         tank_init(&game->tanks[game->tank_count], x, y, TANK_TYPE_ENEMY);
-        enemy_ai_init(&game->enemy_ais[game->tank_count], &game->tanks[0]);
+
+        // 初始化AI模型
+        if (!model_ai_init(&progress->ai_models[i], progress->model_path)) {
+            fprintf(stderr, "警告: AI模型 %d 初始化失败\n", i);
+        }
+
         game->tank_count++;
     }
 
@@ -104,6 +122,56 @@ int main(int argc, char* argv[]) {
     printf("========================================\n");
     printf("  坦克大战 - 玩家 vs AI 挑战模式\n");
     printf("========================================\n");
+
+    // 初始化Python模型AI系统
+    if (!model_ai_system_init()) {
+        fprintf(stderr, "模型AI系统初始化失败\n");
+        return 1;
+    }
+
+    // 选择AI模型
+    char selected_model[256] = "";
+
+    if (argc > 1) {
+        // 命令行指定模型
+        strncpy(selected_model, argv[1], sizeof(selected_model) - 1);
+        printf("使用指定模型: %s\n", selected_model);
+    } else {
+        // 交互式选择
+        char models[50][256];
+        int model_count = model_ai_list_models(models, 50);
+
+        if (model_count == 0) {
+            printf("\n⚠ 未找到训练模型！\n");
+            printf("请先运行训练: python python/train.py\n");
+            model_ai_system_cleanup();
+            return 1;
+        }
+
+        printf("\n可用的AI模型:\n");
+        for (int i = 0; i < model_count; i++) {
+            printf("  [%d] %s\n", i + 1, models[i]);
+        }
+
+        int choice = 1;  // 默认选择第一个
+        printf("\n请选择模型 (1-%d, 默认=1): ", model_count);
+
+        char input[32];
+        if (fgets(input, sizeof(input), stdin)) {
+            if (input[0] != '\n') {
+                choice = atoi(input);
+            }
+        }
+
+        if (choice < 1 || choice > model_count) {
+            printf("无效选择，使用默认模型\n");
+            choice = 1;
+        }
+
+        strncpy(selected_model, models[choice - 1], sizeof(selected_model) - 1);
+        printf("✓ 已选择: %s\n", selected_model);
+    }
+
     printf("\n目标: 连胜 %d 局获得最终胜利！\n", WIN_TARGET);
     printf("\n规则:\n");
     printf("  - 战胜AI后，AI数量增加1\n");
@@ -129,6 +197,12 @@ int main(int argc, char* argv[]) {
     GameProgress progress = {0};
     progress.wins = 0;
     progress.current_ai_count = 1;  // 从1个AI开始
+    strncpy(progress.model_path, selected_model, sizeof(progress.model_path) - 1);
+
+    // 初始化AI模型数组
+    for (int i = 0; i < MAX_AI_TANKS; i++) {
+        progress.ai_models[i].initialized = false;
+    }
 
     // 开始第一回合
     start_new_round(&game, &progress);
@@ -178,6 +252,22 @@ int main(int argc, char* argv[]) {
                     // 没有输入时立即停止移动
                     player_tank->vx = 0;
                     player_tank->vy = 0;
+                }
+            }
+
+            // AI坦克控制
+            int ai_index = 0;
+            for (int i = 0; i < game.tank_count; i++) {
+                if (game.tanks[i].type == TANK_TYPE_ENEMY && game.tanks[i].alive) {
+                    if (ai_index < MAX_AI_TANKS && progress.ai_models[ai_index].initialized) {
+                        // 使用模型AI获取动作
+                        TankAction action = model_ai_get_action(&progress.ai_models[ai_index],
+                                                                &game, i);
+                        if (action != ACTION_IDLE) {
+                            game_execute_action(&game, i, action);
+                        }
+                    }
+                    ai_index++;
                 }
             }
 
@@ -270,6 +360,16 @@ int main(int argc, char* argv[]) {
     }
 
     // 清理
+    // 清理所有AI模型实例
+    for (int i = 0; i < MAX_AI_TANKS; i++) {
+        if (progress.ai_models[i].initialized) {
+            model_ai_cleanup(&progress.ai_models[i]);
+        }
+    }
+
+    // 清理Python模型AI系统
+    model_ai_system_cleanup();
+
     renderer_cleanup(&renderer);
 
     printf("\n感谢游戏！\n");
