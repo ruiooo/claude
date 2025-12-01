@@ -5,8 +5,8 @@
 #include "rendering.h"
 #include <stdio.h>
 
-// 初始化渲染器
-bool renderer_init(Renderer* r, int width, int height, const char* title) {
+// 初始化渲染器（内部实现）
+static bool renderer_init_internal(Renderer* r, int width, int height, const char* title, int x, int y) {
     r->width = width;
     r->height = height;
     r->initialized = false;
@@ -25,11 +25,7 @@ bool renderer_init(Renderer* r, int width, int height, const char* title) {
     }
 
     // 创建窗口
-    r->window = SDL_CreateWindow(title,
-                                  SDL_WINDOWPOS_CENTERED,
-                                  SDL_WINDOWPOS_CENTERED,
-                                  width, height,
-                                  SDL_WINDOW_SHOWN);
+    r->window = SDL_CreateWindow(title, x, y, width, height, SDL_WINDOW_SHOWN);
     if (!r->window) {
         fprintf(stderr, "窗口创建失败: %s\n", SDL_GetError());
         TTF_Quit();
@@ -60,6 +56,16 @@ bool renderer_init(Renderer* r, int width, int height, const char* title) {
 
     r->initialized = true;
     return true;
+}
+
+// 初始化渲染器（默认居中位置）
+bool renderer_init(Renderer* r, int width, int height, const char* title) {
+    return renderer_init_internal(r, width, height, title, SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED);
+}
+
+// 初始化渲染器（指定窗口位置）
+bool renderer_init_with_pos(Renderer* r, int width, int height, const char* title, int x, int y) {
+    return renderer_init_internal(r, width, height, title, x, y);
 }
 
 // 清理渲染器

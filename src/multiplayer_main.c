@@ -149,12 +149,22 @@ int main(int argc, char* argv[]) {
     local_control.key_right = SDLK_d;
     local_control.key_shoot = SDLK_SPACE;
 
-    // 初始化渲染器
+    // 初始化渲染器（不同位置避免窗口重叠）
     Renderer renderer;
-    const char* window_title = (role == NET_ROLE_SERVER) ?
-        "坦克大战 - 玩家1 (绿色)" : "坦克大战 - 玩家2 (深绿色)";
+    const char* window_title;
+    int window_x, window_y;
 
-    if (!renderer_init(&renderer, MAP_WIDTH, MAP_HEIGHT, window_title)) {
+    if (role == NET_ROLE_SERVER) {
+        window_title = "坦克大战 - 玩家1 (绿色)";
+        window_x = 50;   // 服务器窗口在左边
+        window_y = 100;
+    } else {
+        window_title = "坦克大战 - 玩家2 (深绿色)";
+        window_x = 850;  // 客户端窗口在右边
+        window_y = 100;
+    }
+
+    if (!renderer_init_with_pos(&renderer, MAP_WIDTH, MAP_HEIGHT, window_title, window_x, window_y)) {
         fprintf(stderr, "渲染器初始化失败\n");
         network_close(&net_conn);
         return 1;
