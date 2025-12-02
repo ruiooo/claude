@@ -23,14 +23,36 @@ bool model_ai_system_init(void) {
         return true;
     }
 
-    // 检查是否有venv虚拟环境
+    // 检查虚拟环境（优先使用编译时配置，然后检查常见名称）
     struct stat st;
-    if (stat("./venv/bin/python3", &st) == 0) {
-        // 设置Python Home为venv目录
+    const char* venv_candidates[] = {
+#ifdef VENV_DIR
+        "./" VENV_DIR,
+#endif
+        "./venv",
+        "./.venv",
+        "./env",
+        NULL
+    };
+
+    const char* found_venv = NULL;
+    for (int i = 0; venv_candidates[i] != NULL; i++) {
+        char python_path[512];
+        snprintf(python_path, sizeof(python_path), "%s/bin/python3", venv_candidates[i]);
+        if (stat(python_path, &st) == 0) {
+            found_venv = venv_candidates[i];
+            break;
+        }
+    }
+
+    if (found_venv) {
+        // 设置Python Home为虚拟环境目录
         wchar_t venv_home[512];
-        mbstowcs(venv_home, "./venv", 512);
+        mbstowcs(venv_home, found_venv, 512);
         Py_SetPythonHome(venv_home);
-        printf("使用虚拟环境: ./venv\n");
+        printf("使用虚拟环境: %s\n", found_venv);
+    } else {
+        printf("未找到虚拟环境，使用系统Python\n");
     }
 
     // 初始化Python解释器

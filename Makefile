@@ -3,16 +3,21 @@
 # 编译器设置
 CC = gcc
 
+# 虚拟环境配置（可修改）
+VENV_DIR ?= venv
+
 # 检测虚拟环境
-ifneq (,$(wildcard ./venv/bin/python3-config))
-    PYTHON_CONFIG = ./venv/bin/python3-config
+ifneq (,$(wildcard ./$(VENV_DIR)/bin/python3-config))
+    PYTHON_CONFIG = ./$(VENV_DIR)/bin/python3-config
+    $(info 使用虚拟环境: $(VENV_DIR))
 else
     PYTHON_CONFIG = python3-config
+    $(info 使用系统Python)
 endif
 
 PYTHON_INCLUDES = $(shell $(PYTHON_CONFIG) --includes)
 PYTHON_LDFLAGS = $(shell $(PYTHON_CONFIG) --ldflags --embed 2>/dev/null || $(PYTHON_CONFIG) --ldflags)
-CFLAGS = -Wall -O3 -fPIC -std=c11 $(PYTHON_INCLUDES)
+CFLAGS = -Wall -O3 -fPIC -std=c11 $(PYTHON_INCLUDES) -DVENV_DIR=\"$(VENV_DIR)\"
 LDFLAGS = -lSDL2 -lSDL2_ttf -lm -shared
 
 # 目录
@@ -84,17 +89,19 @@ install-deps:
 
 # 创建虚拟环境
 venv:
-	python3 -m venv venv
-	./venv/bin/pip install --upgrade pip
-	@echo "✓ 虚拟环境已创建: ./venv"
-	@echo "  激活: source venv/bin/activate"
+	python3 -m venv $(VENV_DIR)
+	./$(VENV_DIR)/bin/pip install --upgrade pip
+	@echo "✓ 虚拟环境已创建: ./$(VENV_DIR)"
+	@echo "  激活: source $(VENV_DIR)/bin/activate"
 	@echo "  安装依赖: make install-python-deps"
+	@echo ""
+	@echo "提示: 如需自定义虚拟环境名称，使用: make venv VENV_DIR=your_env_name"
 
 # 安装Python依赖（自动检测venv）
 install-python-deps:
-	@if [ -d "./venv" ]; then \
-		echo "安装到虚拟环境 venv/"; \
-		./venv/bin/pip install -r requirements.txt; \
+	@if [ -d "./$(VENV_DIR)" ]; then \
+		echo "安装到虚拟环境 $(VENV_DIR)/"; \
+		./$(VENV_DIR)/bin/pip install -r requirements.txt; \
 	else \
 		echo "安装到系统Python"; \
 		pip install -r requirements.txt; \
@@ -140,7 +147,14 @@ help:
 	@echo "  make train            - 运行训练（纯文本模式，自动提示选择模型）"
 	@echo "  make train-vis        - 运行训练（可视化模式，自动提示选择模型）"
 	@echo ""
-	@echo "注意: 运行玩家对战模式时，会自动提示选择AI模型版本"
+	@echo "虚拟环境配置:"
+	@echo "  VENV_DIR=venv         - 默认虚拟环境名称"
+	@echo "  make venv VENV_DIR=myenv   - 创建自定义名称的虚拟环境"
+	@echo "  make VENV_DIR=myenv        - 使用自定义虚拟环境编译"
+	@echo ""
+	@echo "注意:"
+	@echo "  - 程序会自动检测虚拟环境（venv, .venv, env）"
+	@echo "  - 运行玩家对战模式时，会自动提示选择AI模型版本"
 	@echo ""
 
 .PHONY: all clean rebuild install-deps install-python-deps run-player run-multiplayer-server run-multiplayer-client train train-vis help
