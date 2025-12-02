@@ -16,9 +16,15 @@ LIB_DIR = .
 SOURCES = $(wildcard $(SRC_DIR)/*.c)
 OBJECTS = $(SOURCES:$(SRC_DIR)/%.c=$(BUILD_DIR)/%.o)
 
-# 排除main.c和multiplayer_main.c用于共享库
-LIB_SOURCES = $(filter-out $(SRC_DIR)/main.c $(SRC_DIR)/multiplayer_main.c, $(SOURCES))
+# 排除main.c、multiplayer_main.c和model_ai.c用于共享库
+LIB_SOURCES = $(filter-out $(SRC_DIR)/main.c $(SRC_DIR)/multiplayer_main.c $(SRC_DIR)/model_ai.c, $(SOURCES))
 LIB_OBJECTS = $(LIB_SOURCES:$(SRC_DIR)/%.c=$(BUILD_DIR)/%.o)
+
+# 玩家程序需要的对象文件（包含model_ai.o）
+PLAYER_OBJECTS = $(filter-out $(BUILD_DIR)/multiplayer_main.o, $(OBJECTS))
+
+# 多人对战程序需要的对象文件（排除main.o和model_ai.o）
+MULTIPLAYER_OBJECTS = $(filter-out $(BUILD_DIR)/main.o $(BUILD_DIR)/model_ai.o, $(OBJECTS))
 
 # 输出文件
 SHARED_LIB = $(LIB_DIR)/libtankbattle.so
@@ -42,12 +48,12 @@ $(SHARED_LIB): $(LIB_OBJECTS)
 	@echo "共享库已创建: $(SHARED_LIB)"
 
 # 创建玩家可执行文件（需要Python支持）
-$(PLAYER_EXEC): $(filter-out $(BUILD_DIR)/multiplayer_main.o, $(OBJECTS))
+$(PLAYER_EXEC): $(PLAYER_OBJECTS)
 	$(CC) -o $@ $^ -lSDL2 -lSDL2_ttf -lm $(PYTHON_LDFLAGS)
 	@echo "玩家程序已创建: $(PLAYER_EXEC)"
 
-# 创建多人对战可执行文件
-$(MULTIPLAYER_EXEC): $(filter-out $(BUILD_DIR)/main.o, $(OBJECTS))
+# 创建多人对战可执行文件（不需要Python支持）
+$(MULTIPLAYER_EXEC): $(MULTIPLAYER_OBJECTS)
 	$(CC) -o $@ $^ -lSDL2 -lSDL2_ttf -lm
 	@echo "多人对战程序已创建: $(MULTIPLAYER_EXEC)"
 
