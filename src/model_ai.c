@@ -203,7 +203,7 @@ static void game_state_to_observation(const GameState* game, int tank_id,
     obs[idx++] = self_tank->vy / 5.0f;
     obs[idx++] = (float)self_tank->direction / 3.0f;
     obs[idx++] = self_tank->health / 100.0f;
-    obs[idx++] = self_tank->can_shoot ? 1.0f : 0.0f;
+    obs[idx++] = (self_tank->shoot_cooldown == 0) ? 1.0f : 0.0f;  // 是否可以射击
     obs[idx++] = self_tank->alive ? 1.0f : 0.0f;
 
     // 敌人信息（简化：只考虑最近的敌人）
@@ -237,7 +237,7 @@ static void game_state_to_observation(const GameState* game, int tank_id,
     // 子弹信息（简化：只考虑最近的子弹）
     min_dist = 1e9;
     const Bullet* nearest_bullet = NULL;
-    for (int i = 0; i < game->bullet_count; i++) {
+    for (int i = 0; i < MAX_BULLETS; i++) {
         if (!game->bullets[i].active) continue;
 
         float dx = game->bullets[i].x - self_tank->x;
