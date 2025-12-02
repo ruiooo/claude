@@ -12,8 +12,7 @@ typedef enum {
     TANK_TYPE_AI,           // AI控制的坦克（蓝色）
     TANK_TYPE_ENEMY,        // 追踪型敌人（红色）
     TANK_TYPE_SELF_PLAY,    // 历史版本AI敌人（红白色）
-    TANK_TYPE_PLAYER,       // 玩家1控制（绿色）
-    TANK_TYPE_PLAYER2       // 玩家2控制（深绿色）
+    TANK_TYPE_PLAYER        // 玩家控制
 } TankType;
 
 // 坦克动作
@@ -56,7 +55,7 @@ typedef struct {
 #define TANK_SIZE 32
 #define TANK_SPEED 2.5f
 #define TANK_MAX_HEALTH 3
-#define SHOOT_COOLDOWN 15  // 15帧约0.25秒（60fps）- 射击速度提升
+#define SHOOT_COOLDOWN 30  // 30帧约0.5秒（60fps）
 
 // 函数声明
 void tank_init(Tank* tank, float x, float y, TankType type);

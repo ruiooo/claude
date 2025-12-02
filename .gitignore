@@ -7,7 +7,6 @@ __pycache__/
 env/
 venv/
 ENV/
-tank/
 
 # C
 *.o
@@ -35,4 +34,3 @@ Thumbs.db
 # 可执行文件
 tank_battle_player
 libtankbattle.so
-tank_battle_multiplayer
