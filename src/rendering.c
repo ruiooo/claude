@@ -5,8 +5,8 @@
 #include "rendering.h"
 #include <stdio.h>
 
-// 初始化渲染器
-bool renderer_init(Renderer* r, int width, int height, const char* title) {
+// 初始化渲染器（内部实现）
+static bool renderer_init_internal(Renderer* r, int width, int height, const char* title, int x, int y) {
     r->width = width;
     r->height = height;
     r->initialized = false;
@@ -25,11 +25,7 @@ bool renderer_init(Renderer* r, int width, int height, const char* title) {
     }
 
     // 创建窗口
-    r->window = SDL_CreateWindow(title,
-                                  SDL_WINDOWPOS_CENTERED,
-                                  SDL_WINDOWPOS_CENTERED,
-                                  width, height,
-                                  SDL_WINDOW_SHOWN);
+    r->window = SDL_CreateWindow(title, x, y, width, height, SDL_WINDOW_SHOWN);
     if (!r->window) {
         fprintf(stderr, "窗口创建失败: %s\n", SDL_GetError());
         TTF_Quit();
@@ -60,6 +56,16 @@ bool renderer_init(Renderer* r, int width, int height, const char* title) {
 
     r->initialized = true;
     return true;
+}
+
+// 初始化渲染器（默认居中位置）
+bool renderer_init(Renderer* r, int width, int height, const char* title) {
+    return renderer_init_internal(r, width, height, title, SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED);
+}
+
+// 初始化渲染器（指定窗口位置）
+bool renderer_init_with_pos(Renderer* r, int width, int height, const char* title, int x, int y) {
+    return renderer_init_internal(r, width, height, title, x, y);
 }
 
 // 清理渲染器
@@ -121,31 +127,60 @@ static void render_tank(Renderer* r, Tank* tank) {
             SDL_SetRenderDrawColor(r->renderer, 255, 150, 150, 255);
             break;
         case TANK_TYPE_PLAYER:
-            // 绿色（玩家）
+            // 绿色（玩家1）
             SDL_SetRenderDrawColor(r->renderer, 50, 255, 50, 255);
+            break;
+        case TANK_TYPE_PLAYER2:
+            // 深绿色（玩家2）
+            SDL_SetRenderDrawColor(r->renderer, 0, 150, 50, 255);
             break;
     }
 
     SDL_RenderFillRect(r->renderer, &rect);
 
-    // 绘制方向指示（小矩形）
-    SDL_Rect dir_rect;
+    // 绘制炮筒（长方形，一部分在坦克上，一部分在坦克外）
+    SDL_Rect barrel_rect;
+    int barrel_total_length = 20;  // 炮筒总长度
+    int barrel_width = 6;          // 炮筒宽度
+    int barrel_inside = 8;         // 炮筒在坦克内的长度
+    int barrel_outside = barrel_total_length - barrel_inside;  // 炮筒在坦克外的长度
+
     switch (tank->direction) {
         case DIR_UP:
-            dir_rect = (SDL_Rect){(int)tank->x + 12, (int)tank->y, 8, 4};
+            barrel_rect = (SDL_Rect){
+                (int)tank->x + (tank->width - barrel_width) / 2,
+                (int)tank->y - barrel_outside,
+                barrel_width,
+                barrel_total_length
+            };
             break;
         case DIR_DOWN:
-            dir_rect = (SDL_Rect){(int)tank->x + 12, (int)tank->y + 28, 8, 4};
+            barrel_rect = (SDL_Rect){
+                (int)tank->x + (tank->width - barrel_width) / 2,
+                (int)tank->y + tank->height - barrel_inside,
+                barrel_width,
+                barrel_total_length
+            };
             break;
         case DIR_LEFT:
-            dir_rect = (SDL_Rect){(int)tank->x, (int)tank->y + 12, 4, 8};
+            barrel_rect = (SDL_Rect){
+                (int)tank->x - barrel_outside,
+                (int)tank->y + (tank->height - barrel_width) / 2,
+                barrel_total_length,
+                barrel_width
+            };
             break;
         case DIR_RIGHT:
-            dir_rect = (SDL_Rect){(int)tank->x + 28, (int)tank->y + 12, 4, 8};
+            barrel_rect = (SDL_Rect){
+                (int)tank->x + tank->width - barrel_inside,
+                (int)tank->y + (tank->height - barrel_width) / 2,
+                barrel_total_length,
+                barrel_width
+            };
             break;
     }
     SDL_SetRenderDrawColor(r->renderer, 255, 255, 0, 255);
-    SDL_RenderFillRect(r->renderer, &dir_rect);
+    SDL_RenderFillRect(r->renderer, &barrel_rect);
 
     // 渲染血量条
     int bar_width = tank->width;
@@ -247,7 +282,6 @@ void renderer_render_training_info(Renderer* r, int episode, int step,
     char text[256];
     SDL_Color white = {255, 255, 255, 255};
     SDL_Color green = {0, 255, 0, 255};
-    SDL_Color red = {255, 0, 0, 255};
 
     int y = 10;
 
