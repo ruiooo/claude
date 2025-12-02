@@ -23,9 +23,6 @@ typedef struct {
 // 初始化渲染器
 bool renderer_init(Renderer* r, int width, int height, const char* title);
 
-// 初始化渲染器（带窗口位置）
-bool renderer_init_with_pos(Renderer* r, int width, int height, const char* title, int x, int y);
-
 // 清理渲染器
 void renderer_cleanup(Renderer* r);
 

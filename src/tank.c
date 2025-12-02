@@ -36,20 +36,9 @@ void tank_update(Tank* tank) {
     tank->x += tank->vx;
     tank->y += tank->vy;
 
-    // 平滑衰减速度 - 玩家坦克快速停止，AI/敌人坦克平滑移动
-    if (tank->type == TANK_TYPE_PLAYER || tank->type == TANK_TYPE_PLAYER2) {
-        // 玩家坦克：快速停止，无滑行感
-        tank->vx *= 0.5f;
-        tank->vy *= 0.5f;
-    } else {
-        // AI和敌人坦克：平滑移动
-        tank->vx *= 0.95f;
-        tank->vy *= 0.95f;
-    }
-
-    // 速度太小时归零，避免持续微小抖动
-    if (tank->vx > -0.1f && tank->vx < 0.1f) tank->vx = 0;
-    if (tank->vy > -0.1f && tank->vy < 0.1f) tank->vy = 0;
+    // 衰减速度
+    tank->vx *= 0.85f;
+    tank->vy *= 0.85f;
 }
 
 // 移动坦克（带边界检查）
@@ -58,36 +47,42 @@ void tank_move(Tank* tank, Direction dir, int map_width, int map_height) {
 
     tank->direction = dir;
 
-    // 设置速度，不直接修改位置
+    float new_x = tank->x;
+    float new_y = tank->y;
+
     switch (dir) {
         case DIR_UP:
+            new_y = tank->y - TANK_SPEED;
             tank->vy = -TANK_SPEED;
             tank->vx = 0;
             break;
         case DIR_DOWN:
+            new_y = tank->y + TANK_SPEED;
             tank->vy = TANK_SPEED;
             tank->vx = 0;
             break;
         case DIR_LEFT:
+            new_x = tank->x - TANK_SPEED;
             tank->vx = -TANK_SPEED;
             tank->vy = 0;
             break;
         case DIR_RIGHT:
+            new_x = tank->x + TANK_SPEED;
             tank->vx = TANK_SPEED;
             tank->vy = 0;
             break;
     }
 
-    // 预测下一帧位置并边界检查
-    float next_x = tank->x + tank->vx;
-    float next_y = tank->y + tank->vy;
-
-    // 如果即将碰到边界，停止该方向的移动
-    if (next_x < 0 || next_x + tank->width > map_width) {
+    // 边界检查
+    if (new_x >= 0 && new_x + tank->width <= map_width) {
+        tank->x = new_x;
+    } else {
         tank->vx = 0;
     }
 
-    if (next_y < 0 || next_y + tank->height > map_height) {
+    if (new_y >= 0 && new_y + tank->height <= map_height) {
+        tank->y = new_y;
+    } else {
         tank->vy = 0;
     }
 }

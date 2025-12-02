@@ -174,7 +174,6 @@ void game_update(GameState* game) {
         if (game->tanks[i].alive && game->tanks[i].type == TANK_TYPE_ENEMY) {
             TankAction action = enemy_ai_update(&game->enemy_ais[i], &game->tanks[i],
                                                game->tanks, game->tank_count,
-                                               game->bullets, MAX_BULLETS,
                                                game->frame_count);
             game_execute_action(game, i, action);
         }
@@ -189,70 +188,18 @@ void game_update(GameState* game) {
     handle_collisions(game->tanks, game->tank_count, game->bullets, MAX_BULLETS);
 
     // 检查游戏结束条件
-    if (game->mode == MODE_PLAYER) {
-        // 玩家模式：需要区分多人对战和玩家vs AI
-        int player1_alive = 0;
-        int player2_alive = 0;
-        int enemy_alive = 0;
+    Tank* ai_tank = game_get_ai_tank(game);
+    int enemy_alive = game_get_alive_count(game, TANK_TYPE_ENEMY) +
+                     game_get_alive_count(game, TANK_TYPE_SELF_PLAY);
 
-        for (int i = 0; i < game->tank_count; i++) {
-            if (game->tanks[i].type == TANK_TYPE_PLAYER && game->tanks[i].alive) {
-                player1_alive = 1;
-            }
-            if (game->tanks[i].type == TANK_TYPE_PLAYER2 && game->tanks[i].alive) {
-                player2_alive = 1;
-            }
-            if ((game->tanks[i].type == TANK_TYPE_ENEMY ||
-                 game->tanks[i].type == TANK_TYPE_SELF_PLAY) && game->tanks[i].alive) {
-                enemy_alive = 1;
-            }
-        }
-
-        // 检查是否有PLAYER2（多人对战）
-        bool has_player2 = false;
-        for (int i = 0; i < game->tank_count; i++) {
-            if (game->tanks[i].type == TANK_TYPE_PLAYER2) {
-                has_player2 = true;
-                break;
-            }
-        }
-
-        if (has_player2) {
-            // 多人对战模式：PLAYER vs PLAYER2
-            if (!player1_alive) {
-                game->game_over = true;
-                game->winner = 1;
-            } else if (!player2_alive) {
-                game->game_over = true;
-                game->winner = 0;
-            }
-        } else {
-            // 玩家挑战模式：PLAYER vs ENEMY
-            if (!player1_alive) {
-                // 玩家死亡，敌人获胜
-                game->game_over = true;
-                game->winner = 1;
-            } else if (!enemy_alive && game->tank_count > 1) {
-                // 所有敌人死亡，玩家获胜
-                game->game_over = true;
-                game->winner = 0;
-            }
-        }
-    } else {
-        // AI训练模式：检查AI坦克和敌人
-        Tank* ai_tank = game_get_ai_tank(game);
-        int enemy_alive = game_get_alive_count(game, TANK_TYPE_ENEMY) +
-                         game_get_alive_count(game, TANK_TYPE_SELF_PLAY);
-
-        if (ai_tank && !ai_tank->alive) {
-            // AI坦克死亡，敌人获胜
-            game->game_over = true;
-            game->winner = 1;
-        } else if (enemy_alive == 0 && game->tank_count > 1) {
-            // 所有敌人死亡，AI获胜
-            game->game_over = true;
-            game->winner = 0;
-        }
+    if (ai_tank && !ai_tank->alive) {
+        // AI坦克死亡，敌人获胜
+        game->game_over = true;
+        game->winner = 1;
+    } else if (enemy_alive == 0 && game->tank_count > 1) {
+        // 所有敌人死亡，AI获胜
+        game->game_over = true;
+        game->winner = 0;
     }
 
     // 超时判定（避免无限循环）
