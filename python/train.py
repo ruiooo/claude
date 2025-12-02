@@ -50,9 +50,12 @@ def select_model_interactively():
         print("未找到已有模型，将创建新模型")
         return None
 
+    # 只显示最近的5个模型
+    all_files = all_files[:5]
+
     print("\n请选择:")
     print("  [0] 创建新模型")
-    print("\n可用的模型:")
+    print("\n可用的模型 (最近5个):")
 
     for i, model_path in enumerate(all_files, 1):
         file_size = os.path.getsize(model_path) / (1024 * 1024)  # MB
@@ -61,6 +64,7 @@ def select_model_interactively():
         print(f"      大小: {file_size:.2f} MB | 修改时间: {mod_time.strftime('%Y-%m-%d %H:%M:%S')}")
 
     print("\n" + "="*60)
+    print("提示: 按 Ctrl+C 取消并创建新模型")
 
     while True:
         try:

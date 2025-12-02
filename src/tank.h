@@ -56,7 +56,7 @@ typedef struct {
 #define TANK_SIZE 32
 #define TANK_SPEED 2.5f
 #define TANK_MAX_HEALTH 3
-#define SHOOT_COOLDOWN 30  // 30帧约0.5秒（60fps）
+#define SHOOT_COOLDOWN 15  // 15帧约0.25秒（60fps）- 射击速度提升
 
 // 函数声明
 void tank_init(Tank* tank, float x, float y, TankType type);

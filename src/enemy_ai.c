@@ -74,7 +74,7 @@ static bool detect_danger_bullet(Tank* enemy_tank, Bullet* bullets, int bullet_c
     return false;
 }
 
-// 尝试射击（改进的射击判定）
+// 尝试射击（改进的射击判定 - 减少不必要的转向）
 bool enemy_ai_try_shoot(EnemyAI* ai, Tank* enemy_tank, Tank* target) {
     if (!target || !target->alive) return false;
     if (!tank_can_shoot(enemy_tank)) return false;
@@ -85,34 +85,30 @@ bool enemy_ai_try_shoot(EnemyAI* ai, Tank* enemy_tank, Tank* target) {
 
     // 在理想射程内
     if (dist >= IDEAL_MIN_DIST && dist <= IDEAL_MAX_DIST + 100.0f) {
-        // 判断是否在射击线上（更宽容的容错）
-        float tolerance = 50.0f;
+        // 判断是否在射击线上（更严格的容错，减少转向）
+        float tolerance = 40.0f;
 
-        if (fabs(dy) < tolerance && fabs(dx) > 30.0f) {
-            // 水平射击
-            if (dx > 0) {
-                enemy_tank->direction = DIR_RIGHT;
-                return true;
-            } else {
-                enemy_tank->direction = DIR_LEFT;
-                return true;
+        if (fabs(dy) < tolerance && fabs(dx) > 40.0f) {
+            // 水平射击 - 只有在当前方向不对时才转向
+            Direction desired_dir = (dx > 0) ? DIR_RIGHT : DIR_LEFT;
+            if (enemy_tank->direction != desired_dir) {
+                enemy_tank->direction = desired_dir;
             }
-        } else if (fabs(dx) < tolerance && fabs(dy) > 30.0f) {
-            // 垂直射击
-            if (dy > 0) {
-                enemy_tank->direction = DIR_DOWN;
-                return true;
-            } else {
-                enemy_tank->direction = DIR_UP;
-                return true;
+            return true;
+        } else if (fabs(dx) < tolerance && fabs(dy) > 40.0f) {
+            // 垂直射击 - 只有在当前方向不对时才转向
+            Direction desired_dir = (dy > 0) ? DIR_DOWN : DIR_UP;
+            if (enemy_tank->direction != desired_dir) {
+                enemy_tank->direction = desired_dir;
             }
+            return true;
         }
     }
 
     return false;
 }
 
-// 获取定位移动方向（保持理想射击距离）
+// 获取定位移动方向（保持理想射击距离 - 优化以减少原地转向）
 static Direction get_positioning_direction(Tank* enemy_tank, Tank* target) {
     float dx = target->x - enemy_tank->x;
     float dy = target->y - enemy_tank->y;
@@ -136,22 +132,17 @@ static Direction get_positioning_direction(Tank* enemy_tank, Tank* target) {
         }
     }
 
-    // 距离合适，横向移动以瞄准
-    // 优先调整主轴
-    if (fabs(dx) > 60.0f) {
+    // 距离合适，调整位置以瞄准
+    // 只有偏差较大时才移动
+    if (fabs(dx) > 80.0f) {
         return dx > 0 ? DIR_RIGHT : DIR_LEFT;
-    } else if (fabs(dy) > 60.0f) {
+    } else if (fabs(dy) > 80.0f) {
         return dy > 0 ? DIR_DOWN : DIR_UP;
     }
 
-    // 已经在理想位置，进行小幅横向移动
-    if (fabs(dx) < fabs(dy)) {
-        // 垂直为主轴，横向移动
-        return (rand() % 2 == 0) ? DIR_LEFT : DIR_RIGHT;
-    } else {
-        // 水平为主轴，纵向移动
-        return (rand() % 2 == 0) ? DIR_UP : DIR_DOWN;
-    }
+    // 已经在理想位置且对准较好，保持当前方向继续移动
+    // 不进行随机转向，而是保持当前方向或微调
+    return enemy_tank->direction;
 }
 
 // 更新敌人AI

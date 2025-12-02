@@ -148,13 +148,19 @@ int main(int argc, char* argv[]) {
             return 1;
         }
 
-        printf("\n可用的AI模型:\n");
+        // 只显示最近的5个模型
+        if (model_count > 5) {
+            model_count = 5;
+        }
+
+        printf("\n可用的AI模型 (最近%d个):\n", model_count);
         for (int i = 0; i < model_count; i++) {
             printf("  [%d] %s\n", i + 1, models[i]);
         }
 
         int choice = 1;  // 默认选择第一个
         printf("\n请选择模型 (1-%d, 默认=1): ", model_count);
+        printf("\n提示: 按 Ctrl+C 退出\n");
 
         char input[32];
         if (fgets(input, sizeof(input), stdin)) {
