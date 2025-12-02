@@ -4,7 +4,7 @@
 CC = gcc
 
 # 虚拟环境配置（可修改）
-VENV_DIR ?= venv
+VENV_DIR ?= tank
 
 # 检测虚拟环境
 ifneq (,$(wildcard ./$(VENV_DIR)/bin/python3-config))
