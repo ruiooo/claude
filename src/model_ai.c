@@ -8,6 +8,8 @@
 #include <string.h>
 #include <dirent.h>
 #include <sys/stat.h>
+#include <wchar.h>
+#include <locale.h>
 
 // 全局Python对象
 static PyObject* g_torch_module = NULL;
@@ -19,6 +21,16 @@ static bool g_system_initialized = false;
 bool model_ai_system_init(void) {
     if (g_system_initialized) {
         return true;
+    }
+
+    // 检查是否有venv虚拟环境
+    struct stat st;
+    if (stat("./venv/bin/python3", &st) == 0) {
+        // 设置Python Home为venv目录
+        wchar_t venv_home[512];
+        mbstowcs(venv_home, "./venv", 512);
+        Py_SetPythonHome(venv_home);
+        printf("使用虚拟环境: ./venv\n");
     }
 
     // 初始化Python解释器

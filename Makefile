@@ -2,8 +2,16 @@
 
 # 编译器设置
 CC = gcc
-PYTHON_INCLUDES = $(shell python3-config --includes)
-PYTHON_LDFLAGS = $(shell python3-config --ldflags --embed 2>/dev/null || python3-config --ldflags)
+
+# 检测虚拟环境
+ifneq (,$(wildcard ./venv/bin/python3-config))
+    PYTHON_CONFIG = ./venv/bin/python3-config
+else
+    PYTHON_CONFIG = python3-config
+endif
+
+PYTHON_INCLUDES = $(shell $(PYTHON_CONFIG) --includes)
+PYTHON_LDFLAGS = $(shell $(PYTHON_CONFIG) --ldflags --embed 2>/dev/null || $(PYTHON_CONFIG) --ldflags)
 CFLAGS = -Wall -O3 -fPIC -std=c11 $(PYTHON_INCLUDES)
 LDFLAGS = -lSDL2 -lSDL2_ttf -lm -shared
 
@@ -74,10 +82,24 @@ install-deps:
 	sudo apt-get install -y libsdl2-dev libsdl2-ttf-dev gcc make
 	@echo "C依赖已安装"
 
-# 安装Python依赖
+# 创建虚拟环境
+venv:
+	python3 -m venv venv
+	./venv/bin/pip install --upgrade pip
+	@echo "✓ 虚拟环境已创建: ./venv"
+	@echo "  激活: source venv/bin/activate"
+	@echo "  安装依赖: make install-python-deps"
+
+# 安装Python依赖（自动检测venv）
 install-python-deps:
-	pip install -r requirements.txt
-	@echo "Python依赖已安装"
+	@if [ -d "./venv" ]; then \
+		echo "安装到虚拟环境 venv/"; \
+		./venv/bin/pip install -r requirements.txt; \
+	else \
+		echo "安装到系统Python"; \
+		pip install -r requirements.txt; \
+	fi
+	@echo "✓ Python依赖已安装"
 
 # 运行玩家模式
 run-player: $(PLAYER_EXEC)
@@ -109,8 +131,9 @@ help:
 	@echo "  make all              - 编译所有目标"
 	@echo "  make clean            - 清理构建文件"
 	@echo "  make rebuild          - 重新编译"
+	@echo "  make venv             - 创建Python虚拟环境"
 	@echo "  make install-deps     - 安装C依赖（需要sudo）"
-	@echo "  make install-python-deps - 安装Python依赖"
+	@echo "  make install-python-deps - 安装Python依赖（自动检测venv）"
 	@echo "  make run-player       - 运行玩家对战模式"
 	@echo "  make run-multiplayer-server  - 运行多人对战（服务器）"
 	@echo "  make run-multiplayer-client  - 运行多人对战（客户端）"
