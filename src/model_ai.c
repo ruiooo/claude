@@ -33,10 +33,20 @@ bool model_ai_system_init(void) {
     PyRun_SimpleString("sys.path.insert(0, './python')");
     PyRun_SimpleString("sys.path.insert(0, '.')");
 
+    // 添加用户site-packages路径（用于找到torch）
+    PyRun_SimpleString("import site");
+    PyRun_SimpleString("user_site = site.getusersitepackages()");
+    PyRun_SimpleString("if user_site not in sys.path: sys.path.insert(0, user_site)");
+
+    // 打印Python路径用于调试
+    printf("Python sys.path:\n");
+    PyRun_SimpleString("for p in sys.path[:5]: print('  -', p)");
+
     // 导入torch
     g_torch_module = PyImport_ImportModule("torch");
     if (!g_torch_module) {
         fprintf(stderr, "导入torch模块失败\n");
+        fprintf(stderr, "请确保torch已安装: pip3 install torch\n");
         PyErr_Print();
         Py_Finalize();
         return false;
