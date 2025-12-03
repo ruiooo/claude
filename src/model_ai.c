@@ -10,6 +10,8 @@
 #include <sys/stat.h>
 #include <wchar.h>
 #include <locale.h>
+#include <unistd.h>
+#include <limits.h>
 
 // 全局Python对象
 static PyObject* g_torch_module = NULL;
@@ -36,23 +38,29 @@ bool model_ai_system_init(void) {
     };
 
     const char* found_venv = NULL;
+    char venv_abs_path[PATH_MAX];
     for (int i = 0; venv_candidates[i] != NULL; i++) {
         char python_path[512];
         snprintf(python_path, sizeof(python_path), "%s/bin/python3", venv_candidates[i]);
         if (stat(python_path, &st) == 0) {
             found_venv = venv_candidates[i];
+            // 获取绝对路径
+            if (realpath(found_venv, venv_abs_path) == NULL) {
+                fprintf(stderr, "获取虚拟环境绝对路径失败\n");
+                return false;
+            }
             break;
         }
     }
 
     if (found_venv) {
-        // 设置Python程序路径为虚拟环境的Python可执行文件
-        char python_exe[512];
-        snprintf(python_exe, sizeof(python_exe), "%s/bin/python3", found_venv);
-        wchar_t python_exe_wide[512];
-        mbstowcs(python_exe_wide, python_exe, 512);
+        // 设置Python程序路径为虚拟环境的Python可执行文件（使用绝对路径）
+        char python_exe[PATH_MAX];
+        snprintf(python_exe, sizeof(python_exe), "%s/bin/python3", venv_abs_path);
+        wchar_t python_exe_wide[PATH_MAX];
+        mbstowcs(python_exe_wide, python_exe, PATH_MAX);
         Py_SetProgramName(python_exe_wide);
-        printf("使用虚拟环境: %s\n", found_venv);
+        printf("使用虚拟环境: %s\n", venv_abs_path);
     } else {
         printf("未找到虚拟环境，使用系统Python\n");
     }
@@ -64,15 +72,45 @@ bool model_ai_system_init(void) {
         return false;
     }
 
-    // 添加python目录到Python路径
-    PyRun_SimpleString("import sys");
-    PyRun_SimpleString("sys.path.insert(0, './python')");
-    PyRun_SimpleString("sys.path.insert(0, '.')");
+    // 获取当前工作目录
+    char cwd[PATH_MAX];
+    if (getcwd(cwd, sizeof(cwd)) == NULL) {
+        fprintf(stderr, "获取当前工作目录失败\n");
+        Py_Finalize();
+        return false;
+    }
 
-    // 添加用户site-packages路径（用于找到torch）
-    PyRun_SimpleString("import site");
-    PyRun_SimpleString("user_site = site.getusersitepackages()");
-    PyRun_SimpleString("if user_site not in sys.path: sys.path.insert(0, user_site)");
+    // 配置Python路径
+    PyRun_SimpleString("import sys");
+
+    // 如果使用虚拟环境，设置虚拟环境的site-packages
+    if (found_venv) {
+        // 清理sys.path，移除系统的site-packages
+        PyRun_SimpleString("import site");
+        PyRun_SimpleString("sys.path = [p for p in sys.path if 'site-packages' not in p or p.startswith(sys.prefix)]");
+
+        // 添加虚拟环境的site-packages
+        char add_venv_path_cmd[PATH_MAX * 2];
+        snprintf(add_venv_path_cmd, sizeof(add_venv_path_cmd),
+                 "import site; "
+                 "venv_site = '%s/lib/python' + str(sys.version_info.major) + '.' + str(sys.version_info.minor) + '/site-packages'; "
+                 "if venv_site not in sys.path: sys.path.insert(0, venv_site)",
+                 venv_abs_path);
+        PyRun_SimpleString(add_venv_path_cmd);
+    }
+
+    // 添加项目python目录到Python路径
+    char add_python_dir_cmd[PATH_MAX];
+    snprintf(add_python_dir_cmd, sizeof(add_python_dir_cmd),
+             "if '%s/python' not in sys.path: sys.path.insert(0, '%s/python')",
+             cwd, cwd);
+    PyRun_SimpleString(add_python_dir_cmd);
+
+    char add_cwd_cmd[PATH_MAX];
+    snprintf(add_cwd_cmd, sizeof(add_cwd_cmd),
+             "if '%s' not in sys.path: sys.path.insert(0, '%s')",
+             cwd, cwd);
+    PyRun_SimpleString(add_cwd_cmd);
 
     // 打印Python路径用于调试
     printf("Python sys.path:\n");
