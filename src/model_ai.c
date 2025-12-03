@@ -46,10 +46,12 @@ bool model_ai_system_init(void) {
     }
 
     if (found_venv) {
-        // 设置Python Home为虚拟环境目录
-        wchar_t venv_home[512];
-        mbstowcs(venv_home, found_venv, 512);
-        Py_SetPythonHome(venv_home);
+        // 设置Python程序路径为虚拟环境的Python可执行文件
+        char python_exe[512];
+        snprintf(python_exe, sizeof(python_exe), "%s/bin/python3", found_venv);
+        wchar_t python_exe_wide[512];
+        mbstowcs(python_exe_wide, python_exe, 512);
+        Py_SetProgramName(python_exe_wide);
         printf("使用虚拟环境: %s\n", found_venv);
     } else {
         printf("未找到虚拟环境，使用系统Python\n");
