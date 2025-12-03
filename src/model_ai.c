@@ -486,54 +486,109 @@ static int compare_models_by_time(const void* a, const void* b) {
     return (mb->mtime > ma->mtime) - (mb->mtime < ma->mtime);
 }
 
-// 列出可用的模型文件（按时间排序，最新的在前，最多返回5个）
+// 列出可用的模型文件（优先显示：最优模型、最新模型、Top3训练版本）
 int model_ai_list_models(char models[][256], int max_count) {
-    ModelFile model_files[100];
-    int count = 0;
+    ModelFile checkpoint_files[100];
+    int checkpoint_count = 0;
+    int result_count = 0;
 
-    // 搜索的目录列表
-    const char* search_dirs[] = {
-        "models",
-        "checkpoints",
+    // 优先级模型路径
+    const char* priority_models[] = {
+        "saved_models/final_model.pth",
+        "saved_models/latest_model.pth",
+    };
+
+    // 1. 添加优先级模型（final_model 和 latest_model）
+    for (int i = 0; i < 2 && result_count < max_count; i++) {
+        struct stat st;
+        if (stat(priority_models[i], &st) == 0) {
+            strncpy(models[result_count], priority_models[i], 256);
+            result_count++;
+        }
+    }
+
+    // 2. 收集所有 checkpoint 文件
+    const char* checkpoint_dirs[] = {
         "saved_models/checkpoints",
-        "saved_models",
+        "checkpoints",
         NULL
     };
 
-    // 遍历所有搜索目录，收集所有模型文件
-    for (int d = 0; search_dirs[d] != NULL && count < 100; d++) {
-        DIR* dir = opendir(search_dirs[d]);
+    for (int d = 0; checkpoint_dirs[d] != NULL && checkpoint_count < 100; d++) {
+        DIR* dir = opendir(checkpoint_dirs[d]);
         if (!dir) continue;
 
         struct dirent* entry;
-        while ((entry = readdir(dir)) != NULL && count < 100) {
-            if (strstr(entry->d_name, ".pth") || strstr(entry->d_name, ".pt")) {
-                // 构建完整路径
-                snprintf(model_files[count].path, 256, "%s/%s", search_dirs[d], entry->d_name);
+        while ((entry = readdir(dir)) != NULL && checkpoint_count < 100) {
+            // 只收集 checkpoint_ep*.pth 文件
+            if (strstr(entry->d_name, "checkpoint_ep") &&
+                (strstr(entry->d_name, ".pth") || strstr(entry->d_name, ".pt"))) {
+                snprintf(checkpoint_files[checkpoint_count].path, 256,
+                        "%s/%s", checkpoint_dirs[d], entry->d_name);
 
                 // 获取文件修改时间
                 struct stat st;
-                if (stat(model_files[count].path, &st) == 0) {
-                    model_files[count].mtime = st.st_mtime;
-                    count++;
+                if (stat(checkpoint_files[checkpoint_count].path, &st) == 0) {
+                    checkpoint_files[checkpoint_count].mtime = st.st_mtime;
+                    checkpoint_count++;
                 }
             }
         }
         closedir(dir);
     }
 
-    if (count == 0) {
-        return 0;
+    // 3. 如果有 checkpoint 文件，按时间排序并添加前3个
+    if (checkpoint_count > 0) {
+        qsort(checkpoint_files, checkpoint_count, sizeof(ModelFile), compare_models_by_time);
+
+        // 添加最新的3个 checkpoint
+        int checkpoints_to_add = (checkpoint_count < 3) ? checkpoint_count : 3;
+        for (int i = 0; i < checkpoints_to_add && result_count < max_count; i++) {
+            strncpy(models[result_count], checkpoint_files[i].path, 256);
+            result_count++;
+        }
     }
 
-    // 按修改时间排序（最新的在前）
-    qsort(model_files, count, sizeof(ModelFile), compare_models_by_time);
+    // 4. 如果仍然没有找到任何模型，搜索其他目录
+    if (result_count == 0) {
+        const char* fallback_dirs[] = {
+            "saved_models",
+            "models",
+            NULL
+        };
 
-    // 只返回最多max_count个（通常是5个）
-    int return_count = (count < max_count) ? count : max_count;
-    for (int i = 0; i < return_count; i++) {
-        strncpy(models[i], model_files[i].path, 256);
+        ModelFile fallback_files[50];
+        int fallback_count = 0;
+
+        for (int d = 0; fallback_dirs[d] != NULL && fallback_count < 50; d++) {
+            DIR* dir = opendir(fallback_dirs[d]);
+            if (!dir) continue;
+
+            struct dirent* entry;
+            while ((entry = readdir(dir)) != NULL && fallback_count < 50) {
+                if (strstr(entry->d_name, ".pth") || strstr(entry->d_name, ".pt")) {
+                    snprintf(fallback_files[fallback_count].path, 256,
+                            "%s/%s", fallback_dirs[d], entry->d_name);
+
+                    struct stat st;
+                    if (stat(fallback_files[fallback_count].path, &st) == 0) {
+                        fallback_files[fallback_count].mtime = st.st_mtime;
+                        fallback_count++;
+                    }
+                }
+            }
+            closedir(dir);
+        }
+
+        if (fallback_count > 0) {
+            qsort(fallback_files, fallback_count, sizeof(ModelFile), compare_models_by_time);
+            int to_add = (fallback_count < max_count) ? fallback_count : max_count;
+            for (int i = 0; i < to_add; i++) {
+                strncpy(models[result_count], fallback_files[i].path, 256);
+                result_count++;
+            }
+        }
     }
 
-    return return_count;
+    return result_count;
 }
