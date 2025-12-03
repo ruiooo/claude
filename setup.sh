@@ -126,6 +126,27 @@ else
     echo "✓ 虚拟环境创建完成"
 fi
 
+# 检测虚拟环境Python版本并安装对应的开发包
+if [ -f "$VENV_DIR/pyvenv.cfg" ]; then
+    VENV_VERSION=$(grep "^version = " "$VENV_DIR/pyvenv.cfg" | cut -d'=' -f2 | tr -d ' ' | cut -d'.' -f1,2)
+    echo "虚拟环境Python版本: $VENV_VERSION"
+
+    # 检查是否安装了对应版本的python-dev
+    PYTHON_CONFIG="python${VENV_VERSION}-config"
+    if ! command -v $PYTHON_CONFIG &> /dev/null; then
+        echo "安装Python ${VENV_VERSION}开发包..."
+        if command -v apt-get &> /dev/null; then
+            sudo apt-get update
+            sudo apt-get install -y python${VENV_VERSION}-dev
+            echo "✓ Python ${VENV_VERSION}开发包安装完成"
+        else
+            echo "⚠ 无法自动安装python${VENV_VERSION}-dev，请手动安装"
+        fi
+    else
+        echo "✓ Python ${VENV_VERSION}开发包已安装"
+    fi
+fi
+
 # 使用虚拟环境的pip
 PIP="$VENV_DIR/bin/pip"
 PYTHON="$VENV_DIR/bin/python3"

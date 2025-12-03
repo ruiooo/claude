@@ -6,13 +6,15 @@ CC = gcc
 # 虚拟环境配置（可修改）
 VENV_DIR ?= tank
 
-# 检测虚拟环境
-ifneq (,$(wildcard ./$(VENV_DIR)/bin/python3-config))
-    PYTHON_CONFIG = ./$(VENV_DIR)/bin/python3-config
-    $(info 使用虚拟环境: $(VENV_DIR))
+# 检测虚拟环境并获取Python版本
+ifneq (,$(wildcard ./$(VENV_DIR)/pyvenv.cfg))
+    # 从pyvenv.cfg读取Python版本
+    VENV_VERSION := $(shell grep "^version = " ./$(VENV_DIR)/pyvenv.cfg | cut -d'=' -f2 | tr -d ' ' | cut -d'.' -f1,2)
+    PYTHON_CONFIG := python$(VENV_VERSION)-config
+    $(info 使用虚拟环境Python $(VENV_VERSION)编译)
 else
     PYTHON_CONFIG = python3-config
-    $(info 使用系统Python)
+    $(info 未找到虚拟环境，使用系统Python)
 endif
 
 PYTHON_INCLUDES = $(shell $(PYTHON_CONFIG) --includes)
