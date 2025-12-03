@@ -319,10 +319,34 @@ if (game_over && winner == 0)
 
 ### 模型保存
 
-**保存频率**:
-- 每 100 回合: `checkpoint_ep{episode}.pth`
-- 训练结束: `final_model.pth`
-- 实时更新: `latest_model.pth`
+**保存策略** (python/train.py):
+
+**1. latest_model.pth** - 最新检查点
+- **保存时机**: 每 100 回合自动更新 (与 checkpoint 同步)
+- **位置**: `saved_models/latest_model.pth`
+- **用途**:
+  - ✅ **推荐用于继续训练** (包含最新的训练状态)
+  - 跟踪训练进度
+  - 快速恢复训练
+- **特点**: 实时更新,始终保存最新状态
+
+**2. final_model.pth** - 最终模型
+- **保存时机**: 训练完成或被中断(Ctrl+C)时
+- **位置**: `saved_models/final_model.pth`
+- **用途**:
+  - ✅ **推荐用于推理/对战** (训练最充分)
+  - 代表完整训练周期的最终成果
+  - 生产环境使用
+- **特点**: 训练完成后的最优模型,通常训练最充分
+
+**3. checkpoint_ep{N}.pth** - 定期检查点
+- **保存时机**: 每 100 回合
+- **位置**: `saved_models/checkpoints/checkpoint_ep{episode}.pth`
+- **用途**:
+  - 历史版本回溯
+  - 对比不同训练阶段
+  - 防止训练意外中断
+- **特点**: 保留训练过程的多个快照
 
 **模型内容**:
 ```python
@@ -330,10 +354,16 @@ if (game_over && winner == 0)
     'policy_net': policy_net.state_dict(),
     'target_net': target_net.state_dict(),
     'optimizer': optimizer.state_dict(),
-    'epsilon': epsilon,
-    'train_step': train_step,
+    'epsilon': epsilon,              # 探索率
+    'train_step': train_step,        # 训练步数
 }
 ```
+
+**继续训练建议**:
+- **从头开始**: 选择 `[0] 创建新模型`
+- **继续训练**: 选择 `latest_model.pth` (最新状态,包含完整训练上下文)
+- **微调模型**: 选择 `final_model.pth` (训练充分,但 epsilon 较低)
+- **特定版本**: 选择具体的 `checkpoint_ep*.pth`
 
 ### 模型加载
 
