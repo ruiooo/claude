@@ -82,27 +82,31 @@ bool model_ai_system_init(void) {
 
     // 配置Python路径
     PyRun_SimpleString("import sys");
+    PyRun_SimpleString("import os");
+    PyRun_SimpleString("import glob");
 
-    // 如果使用虚拟环境，设置虚拟环境的site-packages
+    // 如果使用虚拟环境，完全重建sys.path只使用虚拟环境的路径
     if (found_venv) {
-        // 清理sys.path，移除系统的site-packages
-        PyRun_SimpleString("import sys");
-        PyRun_SimpleString("sys.path = [p for p in sys.path if 'site-packages' not in p]");
-
-        // 使用Python代码动态获取虚拟环境的site-packages路径
-        PyRun_SimpleString("import os");
-        PyRun_SimpleString("import glob");
-
-        char setup_venv_cmd[PATH_MAX * 3];
+        char setup_venv_cmd[PATH_MAX * 4];
         snprintf(setup_venv_cmd, sizeof(setup_venv_cmd),
                  "venv_root = '%s'\n"
                  "venv_lib = os.path.join(venv_root, 'lib')\n"
+                 "new_paths = []\n"
                  "if os.path.exists(venv_lib):\n"
-                 "    python_dirs = glob.glob(os.path.join(venv_lib, 'python*'))\n"
+                 "    python_dirs = sorted(glob.glob(os.path.join(venv_lib, 'python*')))\n"
                  "    if python_dirs:\n"
-                 "        site_packages = os.path.join(python_dirs[0], 'site-packages')\n"
-                 "        if os.path.exists(site_packages) and site_packages not in sys.path:\n"
-                 "            sys.path.insert(0, site_packages)\n",
+                 "        py_ver_dir = python_dirs[0]\n"
+                 "        site_packages = os.path.join(py_ver_dir, 'site-packages')\n"
+                 "        if os.path.exists(site_packages):\n"
+                 "            new_paths.append(site_packages)\n"
+                 "        py_stdlib = py_ver_dir\n"
+                 "        if os.path.exists(py_stdlib):\n"
+                 "            new_paths.append(py_stdlib)\n"
+                 "        py_dynload = os.path.join(py_ver_dir, 'lib-dynload')\n"
+                 "        if os.path.exists(py_dynload):\n"
+                 "            new_paths.append(py_dynload)\n"
+                 "old_paths = [p for p in sys.path if not any(x in p for x in ['/usr/lib/python', '/usr/local/lib/python', 'site-packages'])]\n"
+                 "sys.path = old_paths + new_paths\n",
                  venv_abs_path);
         PyRun_SimpleString(setup_venv_cmd);
     }
@@ -128,7 +132,11 @@ bool model_ai_system_init(void) {
     g_torch_module = PyImport_ImportModule("torch");
     if (!g_torch_module) {
         fprintf(stderr, "导入torch模块失败\n");
-        fprintf(stderr, "请确保torch已安装: pip3 install torch\n");
+        if (found_venv) {
+            fprintf(stderr, "请确保torch已安装: %s/bin/pip install torch\n", venv_abs_path);
+        } else {
+            fprintf(stderr, "请确保torch已安装: pip install torch\n");
+        }
         PyErr_Print();
         Py_Finalize();
         return false;
