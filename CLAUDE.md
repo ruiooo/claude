@@ -33,8 +33,16 @@
 - 可视化模式：实时显示对战画面和训练信息
 
 ✅ **玩家对战模式**
-- WASD移动，方向键射击
+- WASD移动，空格射击
 - 与训练后的AI对战
+- 可选的经验记录功能
+
+✅ **人类数据学习** (模仿学习)
+- 记录玩家对战AI时的操作数据
+- 自动保存为结构化二进制文件(.dat)
+- 训练时预加载人类经验到回放缓冲区
+- 支持质量过滤(低奖励数据自动过滤)
+- AI从人类专家经验中学习策略
 
 ✅ **模型持久化**
 - 定量保存模型（每100回合）
@@ -314,6 +322,66 @@ if (game_over && winner == 0)
 - 连续 5 次胜利: 敌人数 +1
 - 最大敌人数: 10
 - 初始敌人数: 2
+
+## 人类数据学习系统 (模仿学习)
+
+### 数据收集流程
+
+玩家在 `make run-player` 模式下对战AI时，可以选择启用经验记录:
+
+```
+是否启用经验记录功能? (y/n, 默认=n): y
+✓ 已启用经验记录，数据将保存到 human_data/ 目录
+```
+
+**记录机制** (src/main.c):
+- 每帧捕获游戏状态(43维) → 玩家动作 → 下一状态 → 奖励 → 完成标志
+- 缓冲在内存中(最多10000条经验)
+- 每回合结束自动保存为二进制文件: `human_data/experience_<timestamp>.dat`
+
+**数据格式** (.dat文件):
+```c
+struct ExperienceData {
+    int32_t count;                  // 经验数量
+    float states[count][43];        // 状态数组
+    int32_t actions[count];         // 动作数组
+    float rewards[count];           // 奖励数组
+    float next_states[count][43];   // 下一状态数组
+    int32_t dones[count];           // 完成标志数组
+}
+```
+
+### 训练时使用人类数据
+
+**配置** (python/config.py):
+```python
+HUMAN_LEARNING_CONFIG = {
+    'enabled': True,           # 启用人类数据学习
+    'human_data_dir': 'human_data',
+    'preload': True,           # 训练开始时预加载
+    'filter_quality': True,    # 过滤低质量数据
+    'min_reward': -50.0,       # 过滤阈值
+    'sampling_weight': 1.0,    # 采样权重
+}
+```
+
+**加载流程** (python/train.py):
+1. 训练开始时自动扫描 `human_data/` 目录
+2. 加载所有 `.dat` 文件
+3. 过滤低质量经验 (reward < -50)
+4. 预加载到 ReplayBuffer 中
+5. 与AI自己产生的经验混合训练
+
+**好处**:
+- 提供专家策略的初始化
+- 加快训练收敛
+- 提高最终性能上限
+- 降低探索风险
+
+**关键文件**:
+- `src/main.c`: ExperienceRecorder 经验记录器
+- `python/human_data_loader.py`: HumanDataLoader 数据加载器
+- `python/config.py`: HUMAN_LEARNING_CONFIG 配置
 
 ## 模型管理
 

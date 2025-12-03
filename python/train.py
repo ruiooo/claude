@@ -19,6 +19,7 @@ from model import DQNAgent
 from replay_buffer import ReplayBuffer
 from env_wrapper import TankBattleEnv
 from enemy_manager import EnemyManager
+from human_data_loader import HumanDataLoader
 
 
 def select_model_interactively():
@@ -129,6 +130,28 @@ class Trainer:
         # 初始化经验回放缓冲区
         self.replay_buffer = ReplayBuffer(TRAINING_CONFIG['buffer_size'],
                                          MODEL_CONFIG['state_dim'])
+
+        # 加载人类经验数据（如果启用）
+        if HUMAN_LEARNING_CONFIG['enabled'] and HUMAN_LEARNING_CONFIG['preload']:
+            print("\n正在加载人类经验数据...")
+            human_loader = HumanDataLoader(HUMAN_LEARNING_CONFIG['human_data_dir'])
+            loaded_count = human_loader.preload_to_buffer(
+                self.replay_buffer,
+                filter_quality=HUMAN_LEARNING_CONFIG['filter_quality']
+            )
+            if loaded_count > 0:
+                print(f"✓ 已预加载 {loaded_count} 条人类经验到回放缓冲区")
+                # 显示统计信息
+                stats = human_loader.get_stats()
+                if stats['total'] > 0:
+                    print(f"  人类数据统计:")
+                    print(f"    - 总经验数: {stats['total']}")
+                    print(f"    - 数据文件: {stats['files']}")
+                    print(f"    - 平均奖励: {stats['avg_reward']:.2f}")
+                    print(f"    - 胜率: {stats['win_rate']:.1f}%")
+            else:
+                print("未找到人类经验数据或数据质量过低")
+            print()
 
         # 初始化敌人管理器
         config_dict = {

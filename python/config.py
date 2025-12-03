@@ -54,10 +54,21 @@ DIFFICULTY_CONFIG = {
     }
 }
 
+# 人类数据学习配置（模仿学习）
+HUMAN_LEARNING_CONFIG = {
+    'enabled': True,  # 是否使用人类经验数据
+    'human_data_dir': 'human_data',  # 人类数据目录
+    'preload': True,  # 是否在训练开始时预加载人类数据
+    'filter_quality': True,  # 是否过滤低质量数据
+    'min_reward': -50.0,  # 过滤阈值：低于此奖励的经验将被过滤
+    'sampling_weight': 1.0,  # 人类数据采样权重（相对于AI自己的经验）
+}
+
 # 模型保存路径
 PATHS = {
     'models': 'saved_models',
     'checkpoints': 'saved_models/checkpoints',
     'history': 'saved_models/history',
     'logs': 'logs',
+    'human_data': 'human_data',  # 人类经验数据目录
 }
