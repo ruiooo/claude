@@ -112,34 +112,66 @@ else
     echo "✓ 所有C依赖已安装"
 fi
 
+# 创建和配置虚拟环境
+echo ""
+echo "配置Python虚拟环境..."
+
+VENV_DIR="tank"
+
+if [ -d "$VENV_DIR" ]; then
+    echo "✓ 虚拟环境已存在: $VENV_DIR"
+else
+    echo "创建虚拟环境: $VENV_DIR"
+    python3 -m venv "$VENV_DIR"
+    echo "✓ 虚拟环境创建完成"
+fi
+
+# 使用虚拟环境的pip
+PIP="$VENV_DIR/bin/pip"
+PYTHON="$VENV_DIR/bin/python3"
+
+# 升级pip
+echo "升级pip..."
+$PIP install --upgrade pip
+
 # 检查并安装Python依赖
 echo ""
-echo "检查Python依赖..."
+echo "检查Python依赖（虚拟环境）..."
 
 # 检查PyTorch是否已安装
-if python3 -c "import torch" 2>/dev/null; then
-    TORCH_VERSION=$(python3 -c "import torch; print(torch.__version__)" 2>/dev/null)
+if $PYTHON -c "import torch" 2>/dev/null; then
+    TORCH_VERSION=$($PYTHON -c "import torch; print(torch.__version__)" 2>/dev/null)
     echo "✓ PyTorch已安装: $TORCH_VERSION"
 else
-    echo "安装PyTorch..."
+    echo "安装PyTorch到虚拟环境..."
     if $HAS_CUDA; then
         echo "安装PyTorch (CUDA版本)..."
-        pip3 install torch torchvision --index-url https://download.pytorch.org/whl/cu121
+        $PIP install torch torchvision --index-url https://download.pytorch.org/whl/cu121
     else
         echo "安装PyTorch (CPU版本)..."
-        pip3 install torch torchvision
+        $PIP install torch torchvision --index-url https://download.pytorch.org/whl/cpu
     fi
     echo "✓ PyTorch安装完成"
 fi
 
 # 检查NumPy是否已安装
-if python3 -c "import numpy" 2>/dev/null; then
-    NUMPY_VERSION=$(python3 -c "import numpy; print(numpy.__version__)" 2>/dev/null)
+if $PYTHON -c "import numpy" 2>/dev/null; then
+    NUMPY_VERSION=$($PYTHON -c "import numpy; print(numpy.__version__)" 2>/dev/null)
     echo "✓ NumPy已安装: $NUMPY_VERSION"
 else
-    echo "安装NumPy..."
-    pip3 install numpy
+    echo "安装NumPy到虚拟环境..."
+    $PIP install numpy
     echo "✓ NumPy安装完成"
+fi
+
+# 检查tqdm是否已安装
+if $PYTHON -c "import tqdm" 2>/dev/null; then
+    TQDM_VERSION=$($PYTHON -c "import tqdm; print(tqdm.__version__)" 2>/dev/null)
+    echo "✓ tqdm已安装: $TQDM_VERSION"
+else
+    echo "安装tqdm到虚拟环境..."
+    $PIP install tqdm
+    echo "✓ tqdm安装完成"
 fi
 
 echo "✓ Python依赖检查完成"
@@ -168,7 +200,11 @@ echo "✓ 目录创建完成"
 # 测试
 echo ""
 echo "运行测试..."
-python3 -c "import torch; print('PyTorch版本:', torch.__version__); print('CUDA可用:', torch.cuda.is_available())"
+$PYTHON -c "import torch; print('PyTorch版本:', torch.__version__); print('CUDA可用:', torch.cuda.is_available())"
+echo ""
+echo "虚拟环境信息:"
+echo "  Python: $($PYTHON --version)"
+echo "  位置: $(pwd)/$VENV_DIR"
 
 # 完成
 echo ""
