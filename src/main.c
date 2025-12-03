@@ -148,14 +148,19 @@ int main(int argc, char* argv[]) {
             return 1;
         }
 
-        // 只显示最近的5个模型
-        if (model_count > 5) {
-            model_count = 5;
-        }
-
-        printf("\n可用的AI模型 (最近%d个):\n", model_count);
+        // 显示模型列表（最多5个）
+        printf("\n可用的AI模型 (共%d个):\n", model_count);
         for (int i = 0; i < model_count; i++) {
-            printf("  [%d] %s\n", i + 1, models[i]);
+            // 添加模型类型标签
+            const char* label = "";
+            if (strstr(models[i], "best_model") || strstr(models[i], "final_model") || strstr(models[i], "best.pth")) {
+                label = " [最优模型]";
+            } else if (strstr(models[i], "latest_model") || strstr(models[i], "model_latest") || strstr(models[i], "latest.pth")) {
+                label = " [最新模型]";
+            } else if (strstr(models[i], "checkpoint") || strstr(models[i], "epoch")) {
+                label = " [训练版本]";
+            }
+            printf("  [%d] %s%s\n", i + 1, models[i], label);
         }
 
         int choice = 1;  // 默认选择第一个
