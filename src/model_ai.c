@@ -334,79 +334,71 @@ void model_ai_cleanup(ModelAI* ai) {
     ai->initialized = false;
 }
 
-// 将游戏状态转换为观察向量（简化版）
+// 将游戏状态转换为观察向量（与训练时一致：43维）
 static void game_state_to_observation(const GameState* game, int tank_id,
                                       float* obs, int* obs_size) {
-    // 这是一个简化的状态表示
-    // 实际应该与训练时的状态表示一致
+    // 必须与 game.c 中的 game_get_observation 保持一致
+    // 状态维度：6(AI坦克) + 25(5个敌人×5) + 12(3个子弹×4) = 43维
     int idx = 0;
 
-    const Tank* self_tank = &game->tanks[tank_id];
+    const Tank* ai_tank = &game->tanks[tank_id];
 
-    // 自身坦克信息 (8维)
-    obs[idx++] = self_tank->x / (float)game->map_width;
-    obs[idx++] = self_tank->y / (float)game->map_height;
-    obs[idx++] = self_tank->vx / 5.0f;
-    obs[idx++] = self_tank->vy / 5.0f;
-    obs[idx++] = (float)self_tank->direction / 3.0f;
-    obs[idx++] = self_tank->health / 100.0f;
-    obs[idx++] = (self_tank->shoot_cooldown == 0) ? 1.0f : 0.0f;  // 是否可以射击
-    obs[idx++] = self_tank->alive ? 1.0f : 0.0f;
+    // AI坦克状态 (6个值)
+    obs[idx++] = ai_tank->x / (float)game->map_width;
+    obs[idx++] = ai_tank->y / (float)game->map_height;
+    obs[idx++] = ai_tank->vx / 5.0f;  // TANK_SPEED = 5
+    obs[idx++] = ai_tank->vy / 5.0f;
+    obs[idx++] = (float)ai_tank->health / 100.0f;  // TANK_MAX_HEALTH = 100
+    obs[idx++] = ai_tank->shoot_cooldown > 0 ? 1.0f : 0.0f;
 
-    // 敌人信息（简化：只考虑最近的敌人）
-    float min_dist = 1e9;
-    const Tank* nearest_enemy = NULL;
-    for (int i = 0; i < game->tank_count; i++) {
-        if (i == tank_id || !game->tanks[i].alive) continue;
+    // 最近的5个敌人位置和状态 (5 * 5 = 25个值)
+    float enemy_info[5][5] = {0};  // dx, dy, vx, vy, health
+    int enemy_found = 0;
 
-        float dx = game->tanks[i].x - self_tank->x;
-        float dy = game->tanks[i].y - self_tank->y;
-        float dist = dx * dx + dy * dy;
+    for (int i = 0; i < game->tank_count && enemy_found < 5; i++) {
+        if (i != tank_id && game->tanks[i].alive) {
+            float dx = game->tanks[i].x - ai_tank->x;
+            float dy = game->tanks[i].y - ai_tank->y;
 
-        if (dist < min_dist) {
-            min_dist = dist;
-            nearest_enemy = &game->tanks[i];
+            enemy_info[enemy_found][0] = dx / (float)game->map_width;
+            enemy_info[enemy_found][1] = dy / (float)game->map_height;
+            enemy_info[enemy_found][2] = game->tanks[i].vx / 5.0f;
+            enemy_info[enemy_found][3] = game->tanks[i].vy / 5.0f;
+            enemy_info[enemy_found][4] = (float)game->tanks[i].health / 100.0f;
+            enemy_found++;
         }
     }
 
-    if (nearest_enemy) {
-        obs[idx++] = nearest_enemy->x / (float)game->map_width;
-        obs[idx++] = nearest_enemy->y / (float)game->map_height;
-        obs[idx++] = nearest_enemy->vx / 5.0f;
-        obs[idx++] = nearest_enemy->vy / 5.0f;
-        obs[idx++] = (float)nearest_enemy->direction / 3.0f;
-        obs[idx++] = nearest_enemy->health / 100.0f;
-    } else {
-        // 没有敌人时填充0
-        for (int i = 0; i < 6; i++) obs[idx++] = 0.0f;
-    }
-
-    // 子弹信息（简化：只考虑最近的子弹）
-    min_dist = 1e9;
-    const Bullet* nearest_bullet = NULL;
-    for (int i = 0; i < MAX_BULLETS; i++) {
-        if (!game->bullets[i].active) continue;
-
-        float dx = game->bullets[i].x - self_tank->x;
-        float dy = game->bullets[i].y - self_tank->y;
-        float dist = dx * dx + dy * dy;
-
-        if (dist < min_dist) {
-            min_dist = dist;
-            nearest_bullet = &game->bullets[i];
+    for (int i = 0; i < 5; i++) {
+        for (int j = 0; j < 5; j++) {
+            obs[idx++] = enemy_info[i][j];
         }
     }
 
-    if (nearest_bullet) {
-        obs[idx++] = nearest_bullet->x / (float)game->map_width;
-        obs[idx++] = nearest_bullet->y / (float)game->map_height;
-        obs[idx++] = nearest_bullet->vx / 10.0f;
-        obs[idx++] = nearest_bullet->vy / 10.0f;
-    } else {
-        for (int i = 0; i < 4; i++) obs[idx++] = 0.0f;
+    // 最近的3个子弹 (3 * 4 = 12个值)
+    float bullet_info[3][4] = {0};  // dx, dy, vx, vy
+    int bullet_found = 0;
+
+    for (int i = 0; i < MAX_BULLETS && bullet_found < 3; i++) {
+        if (game->bullets[i].active && game->bullets[i].owner_id != ai_tank->id) {
+            float dx = game->bullets[i].x - ai_tank->x;
+            float dy = game->bullets[i].y - ai_tank->y;
+
+            bullet_info[bullet_found][0] = dx / (float)game->map_width;
+            bullet_info[bullet_found][1] = dy / (float)game->map_height;
+            bullet_info[bullet_found][2] = game->bullets[i].vx / 10.0f;  // BULLET_SPEED = 10
+            bullet_info[bullet_found][3] = game->bullets[i].vy / 10.0f;
+            bullet_found++;
+        }
     }
 
-    *obs_size = idx;
+    for (int i = 0; i < 3; i++) {
+        for (int j = 0; j < 4; j++) {
+            obs[idx++] = bullet_info[i][j];
+        }
+    }
+
+    *obs_size = idx;  // 总共 6 + 25 + 12 = 43 维
 }
 
 // 获取模型AI的决策
