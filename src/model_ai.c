@@ -85,30 +85,39 @@ bool model_ai_system_init(void) {
     PyRun_SimpleString("import os");
     PyRun_SimpleString("import glob");
 
-    // 如果使用虚拟环境，重建sys.path：保留系统标准库但移除系统site-packages
+    // 如果使用虚拟环境，重建sys.path：只使用虚拟环境版本匹配的标准库
     if (found_venv) {
         char setup_venv_cmd[PATH_MAX * 4];
         snprintf(setup_venv_cmd, sizeof(setup_venv_cmd),
                  "venv_root = '%s'\n"
                  "venv_lib = os.path.join(venv_root, 'lib')\n"
                  "venv_paths = []\n"
+                 "venv_version = ''\n"
                  "system_stdlib = []\n"
                  "other_paths = []\n"
                  "if os.path.exists(venv_lib):\n"
                  "    python_dirs = sorted(glob.glob(os.path.join(venv_lib, 'python*')))\n"
                  "    if python_dirs:\n"
                  "        py_ver_dir = python_dirs[0]\n"
+                 "        venv_version = os.path.basename(py_ver_dir)\n"
                  "        site_packages = os.path.join(py_ver_dir, 'site-packages')\n"
                  "        if os.path.exists(site_packages):\n"
                  "            venv_paths.append(site_packages)\n"
                  "        py_dynload = os.path.join(py_ver_dir, 'lib-dynload')\n"
                  "        if os.path.exists(py_dynload):\n"
                  "            venv_paths.append(py_dynload)\n"
+                 "        sys_py_lib = os.path.join('/usr/lib', venv_version)\n"
+                 "        if os.path.exists(sys_py_lib):\n"
+                 "            system_stdlib.append(sys_py_lib)\n"
+                 "        sys_py_dynload = os.path.join('/usr/lib', venv_version, 'lib-dynload')\n"
+                 "        if os.path.exists(sys_py_dynload):\n"
+                 "            system_stdlib.append(sys_py_dynload)\n"
+                 "        sys_py_zip = '/usr/lib/' + venv_version.replace('.', '') + '.zip'\n"
+                 "        if os.path.exists(sys_py_zip):\n"
+                 "            system_stdlib.append(sys_py_zip)\n"
                  "for p in sys.path:\n"
-                 "    if 'site-packages' in p:\n"
+                 "    if 'site-packages' in p or '/usr/lib/python' in p or '/usr/local/lib/python' in p:\n"
                  "        continue\n"
-                 "    elif '/usr/lib/python' in p or '/usr/local/lib/python' in p:\n"
-                 "        system_stdlib.append(p)\n"
                  "    else:\n"
                  "        other_paths.append(p)\n"
                  "sys.path = other_paths + venv_paths + system_stdlib\n",
