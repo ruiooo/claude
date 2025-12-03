@@ -86,17 +86,25 @@ bool model_ai_system_init(void) {
     // 如果使用虚拟环境，设置虚拟环境的site-packages
     if (found_venv) {
         // 清理sys.path，移除系统的site-packages
-        PyRun_SimpleString("import site");
-        PyRun_SimpleString("sys.path = [p for p in sys.path if 'site-packages' not in p or p.startswith(sys.prefix)]");
+        PyRun_SimpleString("import sys");
+        PyRun_SimpleString("sys.path = [p for p in sys.path if 'site-packages' not in p]");
 
-        // 添加虚拟环境的site-packages
-        char add_venv_path_cmd[PATH_MAX * 2];
-        snprintf(add_venv_path_cmd, sizeof(add_venv_path_cmd),
-                 "import site; "
-                 "venv_site = '%s/lib/python' + str(sys.version_info.major) + '.' + str(sys.version_info.minor) + '/site-packages'; "
-                 "if venv_site not in sys.path: sys.path.insert(0, venv_site)",
+        // 使用Python代码动态获取虚拟环境的site-packages路径
+        PyRun_SimpleString("import os");
+        PyRun_SimpleString("import glob");
+
+        char setup_venv_cmd[PATH_MAX * 3];
+        snprintf(setup_venv_cmd, sizeof(setup_venv_cmd),
+                 "venv_root = '%s'\n"
+                 "venv_lib = os.path.join(venv_root, 'lib')\n"
+                 "if os.path.exists(venv_lib):\n"
+                 "    python_dirs = glob.glob(os.path.join(venv_lib, 'python*'))\n"
+                 "    if python_dirs:\n"
+                 "        site_packages = os.path.join(python_dirs[0], 'site-packages')\n"
+                 "        if os.path.exists(site_packages) and site_packages not in sys.path:\n"
+                 "            sys.path.insert(0, site_packages)\n",
                  venv_abs_path);
-        PyRun_SimpleString(add_venv_path_cmd);
+        PyRun_SimpleString(setup_venv_cmd);
     }
 
     // 添加项目python目录到Python路径
