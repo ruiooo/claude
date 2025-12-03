@@ -85,28 +85,33 @@ bool model_ai_system_init(void) {
     PyRun_SimpleString("import os");
     PyRun_SimpleString("import glob");
 
-    // 如果使用虚拟环境，完全重建sys.path只使用虚拟环境的路径
+    // 如果使用虚拟环境，重建sys.path：保留系统标准库但移除系统site-packages
     if (found_venv) {
         char setup_venv_cmd[PATH_MAX * 4];
         snprintf(setup_venv_cmd, sizeof(setup_venv_cmd),
                  "venv_root = '%s'\n"
                  "venv_lib = os.path.join(venv_root, 'lib')\n"
-                 "new_paths = []\n"
+                 "venv_paths = []\n"
+                 "system_stdlib = []\n"
+                 "other_paths = []\n"
                  "if os.path.exists(venv_lib):\n"
                  "    python_dirs = sorted(glob.glob(os.path.join(venv_lib, 'python*')))\n"
                  "    if python_dirs:\n"
                  "        py_ver_dir = python_dirs[0]\n"
                  "        site_packages = os.path.join(py_ver_dir, 'site-packages')\n"
                  "        if os.path.exists(site_packages):\n"
-                 "            new_paths.append(site_packages)\n"
-                 "        py_stdlib = py_ver_dir\n"
-                 "        if os.path.exists(py_stdlib):\n"
-                 "            new_paths.append(py_stdlib)\n"
+                 "            venv_paths.append(site_packages)\n"
                  "        py_dynload = os.path.join(py_ver_dir, 'lib-dynload')\n"
                  "        if os.path.exists(py_dynload):\n"
-                 "            new_paths.append(py_dynload)\n"
-                 "old_paths = [p for p in sys.path if not any(x in p for x in ['/usr/lib/python', '/usr/local/lib/python', 'site-packages'])]\n"
-                 "sys.path = old_paths + new_paths\n",
+                 "            venv_paths.append(py_dynload)\n"
+                 "for p in sys.path:\n"
+                 "    if 'site-packages' in p:\n"
+                 "        continue\n"
+                 "    elif '/usr/lib/python' in p or '/usr/local/lib/python' in p:\n"
+                 "        system_stdlib.append(p)\n"
+                 "    else:\n"
+                 "        other_paths.append(p)\n"
+                 "sys.path = other_paths + venv_paths + system_stdlib\n",
                  venv_abs_path);
         PyRun_SimpleString(setup_venv_cmd);
     }
