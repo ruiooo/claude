@@ -166,9 +166,27 @@ bool model_ai_system_init(void) {
              cwd, cwd);
     PyRun_SimpleString(add_cwd_cmd);
 
-    // 打印Python路径用于调试
+    // 打印Python路径和诊断信息
     printf("Python sys.path:\n");
     PyRun_SimpleString("for p in sys.path[:5]: print('  -', p)");
+
+    // 诊断信息：检查_ctypes模块
+    printf("\n诊断信息：\n");
+    PyRun_SimpleString(
+        "import sys, os\n"
+        "print('Python版本:', sys.version)\n"
+        "print('sys.prefix:', sys.prefix)\n"
+        "print('sys.base_prefix:', sys.base_prefix)\n"
+        "print('sys.executable:', sys.executable)\n"
+        "print('\\n检查_ctypes.so位置:')\n"
+        "for path in sys.path:\n"
+        "    if 'lib-dynload' in path:\n"
+        "        ctypes_so = os.path.join(path, '_ctypes.cpython-' + str(sys.version_info.major) + str(sys.version_info.minor) + '-x86_64-linux-gnu.so')\n"
+        "        exists = os.path.exists(ctypes_so)\n"
+        "        print(f'  {path}: {\"存在\" if exists else \"不存在\"}')\n"
+        "        if exists:\n"
+        "            print(f'    -> {ctypes_so}')\n"
+    );
 
     // 导入torch
     g_torch_module = PyImport_ImportModule("torch");
