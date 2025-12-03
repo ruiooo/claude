@@ -5,7 +5,9 @@
 #include "model_ai.h"
 #include <Python.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
+#include <time.h>
 #include <dirent.h>
 #include <sys/stat.h>
 #include <wchar.h>
@@ -479,35 +481,66 @@ TankAction model_ai_get_action(ModelAI* ai, const GameState* game, int tank_id) 
     return ACTION_IDLE;
 }
 
-// 列出可用的模型文件
+// 模型文件信息
+typedef struct {
+    char path[256];
+    time_t mtime;
+} ModelFile;
+
+// 比较函数：按修改时间降序排序
+static int compare_models_by_time(const void* a, const void* b) {
+    const ModelFile* ma = (const ModelFile*)a;
+    const ModelFile* mb = (const ModelFile*)b;
+    return (mb->mtime > ma->mtime) - (mb->mtime < ma->mtime);
+}
+
+// 列出可用的模型文件（按时间排序，最新的在前，最多返回5个）
 int model_ai_list_models(char models[][256], int max_count) {
+    ModelFile model_files[100];
     int count = 0;
 
-    // 检查models目录
-    DIR* dir = opendir("models");
-    if (dir) {
+    // 搜索的目录列表
+    const char* search_dirs[] = {
+        "models",
+        "checkpoints",
+        "saved_models/checkpoints",
+        NULL
+    };
+
+    // 遍历所有搜索目录
+    for (int d = 0; search_dirs[d] != NULL && count < 100; d++) {
+        DIR* dir = opendir(search_dirs[d]);
+        if (!dir) continue;
+
         struct dirent* entry;
-        while ((entry = readdir(dir)) != NULL && count < max_count) {
-            if (strstr(entry->d_name, ".pth")) {
-                snprintf(models[count], 256, "models/%s", entry->d_name);
-                count++;
+        while ((entry = readdir(dir)) != NULL && count < 100) {
+            if (strstr(entry->d_name, ".pth") || strstr(entry->d_name, ".pt")) {
+                // 构建完整路径
+                snprintf(model_files[count].path, 256, "%s/%s", search_dirs[d], entry->d_name);
+
+                // 获取文件修改时间
+                struct stat st;
+                if (stat(model_files[count].path, &st) == 0) {
+                    model_files[count].mtime = st.st_mtime;
+                    count++;
+                }
             }
         }
         closedir(dir);
     }
 
-    // 检查checkpoints目录
-    dir = opendir("checkpoints");
-    if (dir) {
-        struct dirent* entry;
-        while ((entry = readdir(dir)) != NULL && count < max_count) {
-            if (strstr(entry->d_name, ".pth")) {
-                snprintf(models[count], 256, "checkpoints/%s", entry->d_name);
-                count++;
-            }
-        }
-        closedir(dir);
+    if (count == 0) {
+        return 0;
     }
 
-    return count;
+    // 按修改时间排序（最新的在前）
+    qsort(model_files, count, sizeof(ModelFile), compare_models_by_time);
+
+    // 只返回最多max_count个（通常是5个）
+    int return_count = (count < max_count) ? count : max_count;
+    for (int i = 0; i < return_count; i++) {
+        strncpy(models[i], model_files[i].path, 256);
+    }
+
+    return return_count;
 }
