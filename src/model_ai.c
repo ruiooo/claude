@@ -494,11 +494,10 @@ static int compare_models_by_time(const void* a, const void* b) {
     return (mb->mtime > ma->mtime) - (mb->mtime < ma->mtime);
 }
 
-// 列出可用的模型文件（优先显示最终版本和最新版本，然后是最近3个训练版本）
+// 列出可用的模型文件（按时间排序，最新的在前，最多返回5个）
 int model_ai_list_models(char models[][256], int max_count) {
-    ModelFile all_models[100];
-    int all_count = 0;
-    int final_count = 0;
+    ModelFile model_files[100];
+    int count = 0;
 
     // 搜索的目录列表
     const char* search_dirs[] = {
@@ -509,121 +508,40 @@ int model_ai_list_models(char models[][256], int max_count) {
         NULL
     };
 
-    // 收集所有模型文件
-    for (int d = 0; search_dirs[d] != NULL && all_count < 100; d++) {
+    // 遍历所有搜索目录，收集所有模型文件
+    for (int d = 0; search_dirs[d] != NULL && count < 100; d++) {
         DIR* dir = opendir(search_dirs[d]);
         if (!dir) continue;
 
         struct dirent* entry;
-        while ((entry = readdir(dir)) != NULL && all_count < 100) {
+        while ((entry = readdir(dir)) != NULL && count < 100) {
             if (strstr(entry->d_name, ".pth") || strstr(entry->d_name, ".pt")) {
-                snprintf(all_models[all_count].path, 256, "%s/%s", search_dirs[d], entry->d_name);
+                // 构建完整路径
+                snprintf(model_files[count].path, 256, "%s/%s", search_dirs[d], entry->d_name);
 
+                // 获取文件修改时间
                 struct stat st;
-                if (stat(all_models[all_count].path, &st) == 0) {
-                    all_models[all_count].mtime = st.st_mtime;
-                    all_count++;
+                if (stat(model_files[count].path, &st) == 0) {
+                    model_files[count].mtime = st.st_mtime;
+                    count++;
                 }
             }
         }
         closedir(dir);
     }
 
-    if (all_count == 0) {
+    if (count == 0) {
         return 0;
     }
 
-    // 1. 查找最终版本模型（best model）
-    for (int i = 0; i < all_count; i++) {
-        if (strstr(all_models[i].path, "best_model") ||
-            strstr(all_models[i].path, "final_model") ||
-            strstr(all_models[i].path, "best.pth")) {
-            strncpy(models[final_count++], all_models[i].path, 256);
-            break;  // 只取第一个
-        }
+    // 按修改时间排序（最新的在前）
+    qsort(model_files, count, sizeof(ModelFile), compare_models_by_time);
+
+    // 只返回最多max_count个（通常是5个）
+    int return_count = (count < max_count) ? count : max_count;
+    for (int i = 0; i < return_count; i++) {
+        strncpy(models[i], model_files[i].path, 256);
     }
 
-    // 2. 查找最新版本模型（latest model）
-    for (int i = 0; i < all_count; i++) {
-        if (strstr(all_models[i].path, "latest_model") ||
-            strstr(all_models[i].path, "model_latest") ||
-            strstr(all_models[i].path, "latest.pth")) {
-            // 避免重复
-            bool duplicate = false;
-            for (int j = 0; j < final_count; j++) {
-                if (strcmp(models[j], all_models[i].path) == 0) {
-                    duplicate = true;
-                    break;
-                }
-            }
-            if (!duplicate) {
-                strncpy(models[final_count++], all_models[i].path, 256);
-                break;
-            }
-        }
-    }
-
-    // 3. 收集所有checkpoint文件
-    ModelFile checkpoints[100];
-    int checkpoint_count = 0;
-    for (int i = 0; i < all_count; i++) {
-        if (strstr(all_models[i].path, "checkpoint") ||
-            strstr(all_models[i].path, "epoch")) {
-            // 避免与前面的重复
-            bool duplicate = false;
-            for (int j = 0; j < final_count; j++) {
-                if (strcmp(models[j], all_models[i].path) == 0) {
-                    duplicate = true;
-                    break;
-                }
-            }
-            if (!duplicate && checkpoint_count < 100) {
-                checkpoints[checkpoint_count] = all_models[i];
-                checkpoint_count++;
-            }
-        }
-    }
-
-    // 按时间排序checkpoints（最新的在前）
-    if (checkpoint_count > 0) {
-        qsort(checkpoints, checkpoint_count, sizeof(ModelFile), compare_models_by_time);
-
-        // 添加最多3个最新的checkpoint
-        int to_add = (checkpoint_count < 3) ? checkpoint_count : 3;
-        for (int i = 0; i < to_add && final_count < max_count; i++) {
-            strncpy(models[final_count++], checkpoints[i].path, 256);
-        }
-    }
-
-    // 如果还不够5个，从剩余模型中按时间补充
-    if (final_count < max_count) {
-        // 收集未被选中的模型
-        ModelFile remaining[100];
-        int remaining_count = 0;
-
-        for (int i = 0; i < all_count; i++) {
-            bool already_added = false;
-            for (int j = 0; j < final_count; j++) {
-                if (strcmp(models[j], all_models[i].path) == 0) {
-                    already_added = true;
-                    break;
-                }
-            }
-            if (!already_added && remaining_count < 100) {
-                remaining[remaining_count++] = all_models[i];
-            }
-        }
-
-        // 按时间排序
-        if (remaining_count > 0) {
-            qsort(remaining, remaining_count, sizeof(ModelFile), compare_models_by_time);
-
-            // 补充到max_count个
-            for (int i = 0; i < remaining_count && final_count < max_count; i++) {
-                strncpy(models[final_count++], remaining[i].path, 256);
-            }
-        }
-    }
-
-    return final_count;
+    return return_count;
 }

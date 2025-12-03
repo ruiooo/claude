@@ -143,24 +143,19 @@ int main(int argc, char* argv[]) {
 
         if (model_count == 0) {
             printf("\n⚠ 未找到训练模型！\n");
-            printf("请先运行训练: python python/train.py\n");
+            printf("\n请先训练AI模型：\n");
+            printf("  1. 使用虚拟环境训练: ./tank/bin/python3 python/train.py\n");
+            printf("  2. 或使用Make命令:    make train\n");
+            printf("\n模型将保存到 saved_models/checkpoints/ 目录\n");
+            printf("训练完成后，再次运行 make run-player 即可开始游戏\n\n");
             model_ai_system_cleanup();
             return 1;
         }
 
-        // 显示模型列表（最多5个）
-        printf("\n可用的AI模型 (共%d个):\n", model_count);
+        // 显示模型列表（最多5个最新的）
+        printf("\n可用的AI模型 (最近%d个):\n", model_count);
         for (int i = 0; i < model_count; i++) {
-            // 添加模型类型标签
-            const char* label = "";
-            if (strstr(models[i], "best_model") || strstr(models[i], "final_model") || strstr(models[i], "best.pth")) {
-                label = " [最优模型]";
-            } else if (strstr(models[i], "latest_model") || strstr(models[i], "model_latest") || strstr(models[i], "latest.pth")) {
-                label = " [最新模型]";
-            } else if (strstr(models[i], "checkpoint") || strstr(models[i], "epoch")) {
-                label = " [训练版本]";
-            }
-            printf("  [%d] %s%s\n", i + 1, models[i], label);
+            printf("  [%d] %s\n", i + 1, models[i]);
         }
 
         int choice = 1;  // 默认选择第一个
