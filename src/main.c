@@ -1,5 +1,34 @@
 /*
  * main.c - 玩家对战模式（玩家 vs AI训练模型）
+ *
+ * =================================================================
+ * 核心功能: 人类玩家挑战AI模型的对战系统
+ * =================================================================
+ *
+ * 游戏模式:
+ * - 玩家从对抗1个AI开始
+ * - 每次胜利后AI数量+1（动态难度）
+ * - 连胜10局获得最终胜利
+ * - 任何一局失败即挑战结束
+ *
+ * 人类数据收集（模仿学习）:
+ * - 可选启用经验记录功能
+ * - 记录玩家的状态-动作-奖励-下一状态四元组
+ * - 自动保存为二进制文件(.dat格式)
+ * - 用于训练时的模仿学习（见human_data_loader.py）
+ *
+ * 状态表示（43维，与训练时完全一致）:
+ * - 玩家坦克: 6维 (x, y, vx, vy, health, shoot_cooldown)
+ * - 最近5个敌人: 25维 (每个5维: x, y, vx, vy, health)
+ * - 最近3个子弹: 12维 (每个4维: x, y, vx, vy)
+ *
+ * 动作空间（9维）:
+ * - 0: 静止, 1-4: 移动(上下左右), 5-8: 射击(上下左右)
+ *
+ * 使用方法:
+ *   ./tank_battle_player [model_path]  # 可选指定模型路径
+ *   或
+ *   make run-player  # 交互式选择模型
  */
 
 #include <stdio.h>
@@ -13,35 +42,70 @@
 #include "rendering.h"
 #include "model_ai.h"
 
-#define WINDOW_WIDTH 800
-#define WINDOW_HEIGHT 600
-#define FPS 60
-#define WIN_TARGET 10  // 连胜10局获胜
-#define MAX_AI_TANKS 10
-#define MAX_EXPERIENCE_RECORDS 10000  // 最大记录数
+// ====================================================================
+// 常量定义
+// ====================================================================
 
-// 游戏状态跟踪
+#define WINDOW_WIDTH 800                    // 窗口宽度
+#define WINDOW_HEIGHT 600                   // 窗口高度
+#define FPS 60                              // 帧率(60FPS)
+#define WIN_TARGET 10                       // 连胜目标(10局)
+#define MAX_AI_TANKS 10                     // 最大AI坦克数量
+#define MAX_EXPERIENCE_RECORDS 10000        // 最大经验记录数(单回合)
+
+// ====================================================================
+// 数据结构定义
+// ====================================================================
+
+/**
+ * GameProgress - 游戏进度跟踪结构
+ *
+ * 职责: 跟踪挑战赛的整体进度
+ * - 胜利次数统计
+ * - 动态难度管理(AI数量)
+ * - AI模型实例管理
+ */
 typedef struct {
-    int wins;                // 玩家连胜次数
-    int current_ai_count;    // 当前AI坦克数量
-    bool game_active;        // 当前回合是否进行中
-    char message[256];       // 显示消息
-    ModelAI ai_models[MAX_AI_TANKS];  // AI模型实例
-    char model_path[256];    // 选定的模型路径
+    int wins;                           // 玩家连胜次数(0-WIN_TARGET)
+    int current_ai_count;               // 当前回合的AI坦克数量
+    bool game_active;                   // 当前回合是否进行中
+    char message[256];                  // 显示给用户的消息
+    ModelAI ai_models[MAX_AI_TANKS];   // AI模型实例数组(每个AI一个实例)
+    char model_path[256];               // 选定的PyTorch模型文件路径
 } GameProgress;
 
-// 经验记录器
+/**
+ * ExperienceRecorder - 人类经验记录器
+ *
+ * 功能: 收集玩家游戏过程中的经验数据，用于模仿学习
+ *
+ * 数据格式:
+ * - 与强化学习的transition完全一致
+ * - (state, action, reward, next_state, done)
+ *
+ * 存储格式:
+ * - 二进制文件(.dat)
+ * - 结构: [count(int32)] [states(float[count][43])] [actions(int32[count])]
+ *         [rewards(float[count])] [next_states(float[count][43])] [dones(int32[count])]
+ *
+ * 使用流程:
+ * 1. recorder_init(): 初始化并分配内存
+ * 2. recorder_add(): 每帧添加一条经验
+ * 3. recorder_save(): 回合结束时保存到文件
+ * 4. recorder_reset(): 准备新回合(生成新文件名)
+ * 5. recorder_cleanup(): 释放内存
+ */
 typedef struct {
-    float (*states)[43];      // 状态数组
-    int* actions;              // 动作数组
-    float* rewards;            // 奖励数组
-    float (*next_states)[43];  // 下一状态数组
-    int* dones;                // 结束标志数组
-    int count;                 // 当前记录数
-    int capacity;              // 容量
-    char filename[256];        // 保存文件名
-    bool enabled;              // 是否启用记录
-    int total_recorded;        // 总记录数（跨回合）
+    float (*states)[43];        // 状态数组(每个状态43维)
+    int* actions;               // 动作数组(每个动作是0-8的整数)
+    float* rewards;             // 奖励数组
+    float (*next_states)[43];   // 下一状态数组(每个状态43维)
+    int* dones;                 // 结束标志数组(0=继续, 1=回合结束)
+    int count;                  // 当前记录数(单回合)
+    int capacity;               // 容量上限(防止内存溢出)
+    char filename[256];         // 当前回合的保存文件名
+    bool enabled;               // 是否启用记录功能
+    int total_recorded;         // 总记录数(跨所有回合的累计)
 } ExperienceRecorder;
 
 // 初始化经验记录器

@@ -262,7 +262,52 @@ void game_update(GameState* game) {
     }
 }
 
-// 获取观察状态（用于AI）
+/*
+ * 获取观察状态（用于AI训练和推理）
+ *
+ * 【核心函数】此函数构建DQN神经网络的输入状态向量
+ * 状态维度必须与Python训练代码和推理代码保持一致
+ *
+ * 状态表示设计原则：
+ * 1. 归一化：所有值归一化到 [0, 1] 或 [-1, 1] 范围，便于神经网络学习
+ * 2. 相对性：使用相对位置（dx, dy）而非绝对位置，增强泛化能力
+ * 3. 固定维度：即使实际敌人/子弹数量变化，始终保持固定维度（填充0）
+ *
+ * 状态维度分解：共43维
+ * ┌─────────────────────────────────────────────────────────────┐
+ * │ 第1部分：AI坦克自身状态 (6维)                               │
+ * ├─────────────────────────────────────────────────────────────┤
+ * │ [0] x归一化位置         = x / map_width      范围: [0, 1]  │
+ * │ [1] y归一化位置         = y / map_height     范围: [0, 1]  │
+ * │ [2] x方向速度归一化     = vx / TANK_SPEED    范围: [-1,1]  │
+ * │ [3] y方向速度归一化     = vy / TANK_SPEED    范围: [-1,1]  │
+ * │ [4] 血量归一化          = health / MAX_HEALTH 范围: [0,1]   │
+ * │ [5] 射击冷却标志        = cooldown>0 ? 1:0   范围: {0,1}   │
+ * ├─────────────────────────────────────────────────────────────┤
+ * │ 第2部分：最近5个敌人状态 (5×5 = 25维)                      │
+ * ├─────────────────────────────────────────────────────────────┤
+ * │ 每个敌人5维信息（未找到敌人则填充0）：                      │
+ * │   [0] 相对x距离归一化   = dx / map_width    范围: [-1,1]   │
+ * │   [1] 相对y距离归一化   = dy / map_height   范围: [-1,1]   │
+ * │   [2] 敌人vx归一化      = vx / TANK_SPEED   范围: [-1,1]   │
+ * │   [3] 敌人vy归一化      = vy / TANK_SPEED   范围: [-1,1]   │
+ * │   [4] 敌人血量归一化    = health / MAX_HEALTH 范围: [0,1]  │
+ * ├─────────────────────────────────────────────────────────────┤
+ * │ 第3部分：最近3个敌方子弹状态 (3×4 = 12维)                  │
+ * ├─────────────────────────────────────────────────────────────┤
+ * │ 每个子弹4维信息（未找到子弹则填充0）：                      │
+ * │   [0] 相对x距离归一化   = dx / map_width    范围: [-1,1]   │
+ * │   [1] 相对y距离归一化   = dy / map_height   范围: [-1,1]   │
+ * │   [2] 子弹vx归一化      = vx / BULLET_SPEED 范围: [-1,1]   │
+ * │   [3] 子弹vy归一化      = vy / BULLET_SPEED 范围: [-1,1]   │
+ * └─────────────────────────────────────────────────────────────┘
+ *
+ * 关键点：
+ * - 此函数用于训练时生成状态（通过ctypes调用）
+ * - 必须与 model_ai.c:game_state_to_observation() 完全一致（推理时使用）
+ * - 必须与 python/config.py:MODEL_CONFIG['state_dim']=43 匹配
+ * - 任何修改都必须同步更新以上3处！
+ */
 void game_get_observation(GameState* game, float* obs, int* obs_size) {
     int idx = 0;
 
@@ -272,61 +317,101 @@ void game_get_observation(GameState* game, float* obs, int* obs_size) {
         return;
     }
 
-    // AI坦克状态 (6个值)
-    obs[idx++] = ai_tank->x / game->map_width;
-    obs[idx++] = ai_tank->y / game->map_height;
-    obs[idx++] = ai_tank->vx / TANK_SPEED;
-    obs[idx++] = ai_tank->vy / TANK_SPEED;
-    obs[idx++] = (float)ai_tank->health / TANK_MAX_HEALTH;
-    obs[idx++] = ai_tank->shoot_cooldown > 0 ? 1.0f : 0.0f;
+    // ========== 第1部分：AI坦克自身状态 (6维) ==========
 
-    // 最近的5个敌人位置和状态 (5 * 5 = 25个值)
-    float enemy_info[5][5] = {0};  // x, y, vx, vy, health
+    // [0-1] 位置归一化：将位置映射到 [0, 1]，让网络知道坦克在地图的哪个区域
+    obs[idx++] = ai_tank->x / game->map_width;        // [0] x位置 (0=左边界, 1=右边界)
+    obs[idx++] = ai_tank->y / game->map_height;       // [1] y位置 (0=上边界, 1=下边界)
+
+    // [2-3] 速度归一化：映射到 [-1, 1]，表示移动方向和速度
+    obs[idx++] = ai_tank->vx / TANK_SPEED;            // [2] x方向速度 (-1=左移, 0=静止, 1=右移)
+    obs[idx++] = ai_tank->vy / TANK_SPEED;            // [3] y方向速度 (-1=上移, 0=静止, 1=下移)
+
+    // [4] 血量归一化：0=死亡, 1=满血
+    obs[idx++] = (float)ai_tank->health / TANK_MAX_HEALTH;  // [4] 血量 (范围: [0, 1])
+
+    // [5] 射击冷却：1=冷却中不能射击, 0=可以射击
+    obs[idx++] = ai_tank->shoot_cooldown > 0 ? 1.0f : 0.0f; // [5] 冷却标志
+
+    // ========== 第2部分：最近5个敌人状态 (25维) ==========
+
+    // 为什么是5个？平衡信息量与计算效率
+    // - 太少：AI无法感知多敌人包围
+    // -太多：网络输入维度过大，训练慢且容易过拟合
+
+    float enemy_info[5][5] = {0};  // 预分配5个敌人位置，未找到的填充0
     int enemy_found = 0;
 
+    // 遍历所有坦克，收集敌方坦克信息
     for (int i = 0; i < game->tank_count && enemy_found < 5; i++) {
+        // 只关心存活的非AI坦克（敌人）
         if (game->tanks[i].type != TANK_TYPE_AI && game->tanks[i].alive) {
-            float dx = game->tanks[i].x - ai_tank->x;
-            float dy = game->tanks[i].y - ai_tank->y;
-            float dist = sqrtf(dx * dx + dy * dy);
+            // 计算相对位置（使用相对坐标而非绝对坐标）
+            // 原因：AI需要知道"敌人在我的哪个方向"，而不是"敌人的绝对位置"
+            float dx = game->tanks[i].x - ai_tank->x;  // 正值=敌人在右侧, 负值=左侧
+            float dy = game->tanks[i].y - ai_tank->y;  // 正值=敌人在下方, 负值=上方
 
-            enemy_info[enemy_found][0] = dx / game->map_width;
-            enemy_info[enemy_found][1] = dy / game->map_height;
+            // 归一化到 [-1, 1] 范围（除以地图尺寸）
+            enemy_info[enemy_found][0] = dx / game->map_width;   // 相对x距离
+            enemy_info[enemy_found][1] = dy / game->map_height;  // 相对y距离
+
+            // 敌人速度归一化：帮助AI预测敌人移动轨迹
             enemy_info[enemy_found][2] = game->tanks[i].vx / TANK_SPEED;
             enemy_info[enemy_found][3] = game->tanks[i].vy / TANK_SPEED;
+
+            // 敌人血量：帮助AI优先攻击残血敌人
             enemy_info[enemy_found][4] = (float)game->tanks[i].health / TANK_MAX_HEALTH;
+
             enemy_found++;
         }
     }
 
+    // 展开敌人信息到状态向量（固定25维，不足的位置为0）
+    // 即使只有2个敌人，仍然输出25维（后15维为0）
     for (int i = 0; i < 5; i++) {
         for (int j = 0; j < 5; j++) {
-            obs[idx++] = enemy_info[i][j];
+            obs[idx++] = enemy_info[i][j];  // [6-30] 敌人信息
         }
     }
 
-    // 最近的3个子弹 (3 * 4 = 12个值)
-    float bullet_info[3][4] = {0};  // x, y, vx, vy
+    // ========== 第3部分：最近3个敌方子弹状态 (12维) ==========
+
+    // 为什么需要子弹信息？躲避子弹是生存的关键技能
+    // 为什么只要3个？距离AI最近的子弹威胁最大，远处子弹可以忽略
+
+    float bullet_info[3][4] = {0};  // 预分配3个子弹槽位
     int bullet_found = 0;
 
+    // 遍历所有子弹，收集敌方子弹信息
     for (int i = 0; i < MAX_BULLETS && bullet_found < 3; i++) {
+        // 只关心存活的敌方子弹（owner_id != AI坦克id）
         if (game->bullets[i].active && game->bullets[i].owner_id != ai_tank->id) {
+            // 计算子弹相对位置
             float dx = game->bullets[i].x - ai_tank->x;
             float dy = game->bullets[i].y - ai_tank->y;
 
-            bullet_info[bullet_found][0] = dx / game->map_width;
-            bullet_info[bullet_found][1] = dy / game->map_height;
+            // 归一化相对位置
+            bullet_info[bullet_found][0] = dx / game->map_width;   // 子弹相对x
+            bullet_info[bullet_found][1] = dy / game->map_height;  // 子弹相对y
+
+            // 归一化子弹速度：非常重要！
+            // AI需要根据子弹飞行方向判断是否会击中自己
+            // 例如：dx>0 且 vx>0 意味着子弹正在靠近
             bullet_info[bullet_found][2] = game->bullets[i].vx / BULLET_SPEED;
             bullet_info[bullet_found][3] = game->bullets[i].vy / BULLET_SPEED;
+
             bullet_found++;
         }
     }
 
+    // 展开子弹信息到状态向量（固定12维）
     for (int i = 0; i < 3; i++) {
         for (int j = 0; j < 4; j++) {
-            obs[idx++] = bullet_info[i][j];
+            obs[idx++] = bullet_info[i][j];  // [31-42] 子弹信息
         }
     }
 
-    *obs_size = idx;  // 总共 6 + 25 + 12 = 43 维
+    // 最终验证：确保维度正确
+    *obs_size = idx;  // 必须等于 6 + 25 + 12 = 43 维
+    // 如果不等于43，说明代码有bug！
 }

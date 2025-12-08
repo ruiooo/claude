@@ -125,11 +125,19 @@ run-multiplayer-client: $(MULTIPLAYER_EXEC)
 
 # 运行训练（纯文本模式）
 train:
-	python3 python/train.py --no-visualize
+	@if [ -d "./$(VENV_DIR)" ]; then \
+		./$(VENV_DIR)/bin/python python/train.py --no-visualize; \
+	else \
+		python3 python/train.py --no-visualize; \
+	fi
 
 # 运行训练（可视化模式）
 train-vis:
-	python3 python/train.py --visualize
+	@if [ -d "./$(VENV_DIR)" ]; then \
+		./$(VENV_DIR)/bin/python python/train.py --visualize; \
+	else \
+		python3 python/train.py --visualize; \
+	fi
 
 # 帮助
 help:

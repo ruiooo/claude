@@ -1,5 +1,25 @@
 /*
  * model_ai.c - 基于Python训练模型的AI控制器实现
+ *
+ * 【架构说明】
+ * 这个模块实现了C程序调用Python训练的DQN模型进行推理
+ *
+ * 技术栈：
+ * - Python C API：嵌入Python解释器到C程序
+ * - PyTorch：加载.pth模型文件
+ * - NumPy/Tensor：C float数组 ↔ Python tensor转换
+ *
+ * 核心流程：
+ * 1. 初始化Python解释器和虚拟环境
+ * 2. 加载torch、model、config模块
+ * 3. 创建DQNAgent实例并加载模型权重
+ * 4. 每帧：C状态数组 → Python tensor → 模型推理 → 返回动作
+ *
+ * 关键挑战：
+ * - Python路径配置（虚拟环境vs系统Python）
+ * - 内存管理（Python对象引用计数）
+ * - 错误处理（Python异常 → C错误码）
+ * - 类型转换（C数组 ↔ Python列表 ↔ PyTorch tensor）
  */
 
 #include "model_ai.h"
@@ -15,66 +35,111 @@
 #include <unistd.h>
 #include <limits.h>
 
-// 全局Python对象
-static PyObject* g_torch_module = NULL;
-static PyObject* g_model_module = NULL;
-static PyObject* g_config_module = NULL;
-static bool g_system_initialized = false;
+// ========== 全局Python对象 ==========
+// 这些对象在程序启动时初始化，全局共享，避免重复导入
 
-// 初始化Python解释器和必要模块
+static PyObject* g_torch_module = NULL;   // torch模块（用于创建tensor）
+static PyObject* g_model_module = NULL;   // model模块（DQNAgent类定义）
+static PyObject* g_config_module = NULL;  // config模块（超参数配置）
+static bool g_system_initialized = false; // 系统初始化标志
+
+/*
+ * 初始化Python解释器和必要模块
+ *
+ * 【核心系统初始化】
+ * 这是整个模型AI系统的入口，负责：
+ * 1. 检测并配置Python虚拟环境
+ * 2. 初始化Python解释器
+ * 3. 配置Python模块搜索路径（sys.path）
+ * 4. 导入必要的Python模块（torch, model, config）
+ *
+ * Python虚拟环境检测策略：
+ * - 优先使用编译时指定的VENV_DIR（Makefile传入）
+ * - 然后尝试常见名称：venv, .venv, env
+ * - 最后回退到系统Python
+ *
+ * sys.path配置难点：
+ * - 虚拟环境的site-packages必须在标准库之前
+ * - 需要根据实际Python版本动态查找路径
+ * - 必须包含基础stdlib（如_ctypes.so）
+ *
+ * 错误处理：
+ * - 返回false表示初始化失败
+ * - 调用方应该检查返回值并退出
+ *
+ * @return true=成功, false=失败
+ */
 bool model_ai_system_init(void) {
+    // 防止重复初始化
     if (g_system_initialized) {
         return true;
     }
 
-    // 检查虚拟环境（优先使用编译时配置，然后检查常见名称）
+    // ========== 步骤1：检测虚拟环境 ==========
+
     struct stat st;
+    // 虚拟环境候选目录列表（按优先级）
     const char* venv_candidates[] = {
 #ifdef VENV_DIR
-        "./" VENV_DIR,
+        "./" VENV_DIR,  // 编译时指定（Makefile传入）
 #endif
-        "./venv",
-        "./.venv",
-        "./env",
-        NULL
+        "./venv",       // 常见名称1
+        "./.venv",      // 常见名称2
+        "./env",        // 常见名称3
+        NULL            // 结束标志
     };
 
-    const char* found_venv = NULL;
-    char venv_abs_path[PATH_MAX];
+    const char* found_venv = NULL;  // 找到的虚拟环境目录
+    char venv_abs_path[PATH_MAX];   // 虚拟环境绝对路径
+
+    // 遍历候选目录，检查是否存在python3可执行文件
     for (int i = 0; venv_candidates[i] != NULL; i++) {
         char python_path[512];
         snprintf(python_path, sizeof(python_path), "%s/bin/python3", venv_candidates[i]);
+
+        // 检查文件是否存在
         if (stat(python_path, &st) == 0) {
             found_venv = venv_candidates[i];
-            // 获取绝对路径
+
+            // 获取绝对路径（Python需要绝对路径）
             if (realpath(found_venv, venv_abs_path) == NULL) {
                 fprintf(stderr, "获取虚拟环境绝对路径失败\n");
                 return false;
             }
-            break;
+            break;  // 找到第一个就停止
         }
     }
 
+    // ========== 步骤2：配置Python解释器 ==========
+
     if (found_venv) {
-        // 设置Python程序路径为虚拟环境的Python可执行文件（使用绝对路径）
+        // 使用虚拟环境的Python
         char python_exe[PATH_MAX];
         snprintf(python_exe, sizeof(python_exe), "%s/bin/python3", venv_abs_path);
+
+        // 转换为宽字符（Python C API要求wchar_t*）
         wchar_t python_exe_wide[PATH_MAX];
         mbstowcs(python_exe_wide, python_exe, PATH_MAX);
+
+        // 设置Python程序名（影响sys.executable和sys.prefix）
         Py_SetProgramName(python_exe_wide);
         printf("使用虚拟环境: %s\n", venv_abs_path);
     } else {
+        // 未找到虚拟环境，使用系统Python
         printf("未找到虚拟环境，使用系统Python\n");
     }
 
-    // 初始化Python解释器
-    Py_Initialize();
+    // ========== 步骤3：初始化Python解释器 ==========
+
+    Py_Initialize();  // 启动Python运行时
     if (!Py_IsInitialized()) {
         fprintf(stderr, "Python解释器初始化失败\n");
         return false;
     }
 
-    // 获取当前工作目录
+    // ========== 步骤4：获取当前工作目录 ==========
+    // 需要把项目python/目录加入sys.path
+
     char cwd[PATH_MAX];
     if (getcwd(cwd, sizeof(cwd)) == NULL) {
         fprintf(stderr, "获取当前工作目录失败\n");
@@ -82,13 +147,22 @@ bool model_ai_system_init(void) {
         return false;
     }
 
-    // 配置Python路径
+    // ========== 步骤5：配置Python模块搜索路径（sys.path）==========
+
+    // 导入必要的Python模块（用于路径操作）
     PyRun_SimpleString("import sys");
     PyRun_SimpleString("import os");
     PyRun_SimpleString("import glob");
 
-    // 如果使用虚拟环境，重建sys.path：基于实际运行的Python版本
+    // 如果使用虚拟环境，需要重建sys.path
+    // 原因：默认的sys.path可能不包含虚拟环境的site-packages
+    // 策略：虚拟环境路径 > 基础标准库 > 其他路径
     if (found_venv) {
+        // 这段Python代码动态构建sys.path：
+        // 1. 从pyvenv.cfg读取基础Python位置
+        // 2. 查找虚拟环境的site-packages
+        // 3. 查找基础Python的标准库和lib-dynload
+        // 4. 重新组织sys.path顺序
         char setup_venv_cmd[PATH_MAX * 5];
         snprintf(setup_venv_cmd, sizeof(setup_venv_cmd),
                  "venv_root = '%s'\n"
@@ -140,24 +214,28 @@ bool model_ai_system_init(void) {
         PyRun_SimpleString(setup_venv_cmd);
     }
 
-    // 添加项目python目录到Python路径
+    // ========== 步骤6：添加项目目录到Python路径 ==========
+
+    // 添加项目python/目录（包含model.py, config.py等）
     char add_python_dir_cmd[PATH_MAX];
     snprintf(add_python_dir_cmd, sizeof(add_python_dir_cmd),
              "if '%s/python' not in sys.path: sys.path.insert(0, '%s/python')",
              cwd, cwd);
     PyRun_SimpleString(add_python_dir_cmd);
 
+    // 添加项目根目录（作为后备）
     char add_cwd_cmd[PATH_MAX];
     snprintf(add_cwd_cmd, sizeof(add_cwd_cmd),
              "if '%s' not in sys.path: sys.path.insert(0, '%s')",
              cwd, cwd);
     PyRun_SimpleString(add_cwd_cmd);
 
-    // 打印Python路径和诊断信息
+    // ========== 步骤7：打印诊断信息（调试用）==========
+
     printf("Python sys.path:\n");
     PyRun_SimpleString("for p in sys.path[:5]: print('  -', p)");
 
-    // 诊断信息：检查_ctypes模块
+    // 诊断信息：检查Python环境和关键依赖
     printf("\n诊断信息：\n");
     PyRun_SimpleString(
         "import sys, os\n"
@@ -175,7 +253,9 @@ bool model_ai_system_init(void) {
         "            print(f'    -> {ctypes_so}')\n"
     );
 
-    // 导入torch
+    // ========== 步骤8：导入Python模块 ==========
+
+    // 导入torch模块（PyTorch深度学习框架）
     g_torch_module = PyImport_ImportModule("torch");
     if (!g_torch_module) {
         fprintf(stderr, "导入torch模块失败\n");
@@ -184,22 +264,22 @@ bool model_ai_system_init(void) {
         } else {
             fprintf(stderr, "请确保torch已安装: pip install torch\n");
         }
-        PyErr_Print();
+        PyErr_Print();  // 打印Python异常堆栈
         Py_Finalize();
         return false;
     }
 
-    // 导入model模块
+    // 导入model模块（包含DQNAgent类定义）
     g_model_module = PyImport_ImportModule("model");
     if (!g_model_module) {
         fprintf(stderr, "导入model模块失败\n");
         PyErr_Print();
-        Py_XDECREF(g_torch_module);
+        Py_XDECREF(g_torch_module);  // 清理已导入的模块
         Py_Finalize();
         return false;
     }
 
-    // 导入config模块
+    // 导入config模块（包含超参数配置）
     g_config_module = PyImport_ImportModule("config");
     if (!g_config_module) {
         fprintf(stderr, "导入config模块失败\n");
@@ -334,7 +414,29 @@ void model_ai_cleanup(ModelAI* ai) {
     ai->initialized = false;
 }
 
-// 将游戏状态转换为观察向量（与训练时一致：43维）
+/*
+ * 将游戏状态转换为观察向量（推理时使用）
+ *
+ * 【关键一致性要求】
+ * 此函数必须与 game.c:game_get_observation() 完全一致！
+ * 任何不一致都会导致模型输入维度错误或数值范围错误
+ *
+ * 状态维度：43维（固定）
+ * - 6维：AI坦克状态
+ * - 25维：5个敌人状态（每个5维）
+ * - 12维：3个子弹状态（每个4维）
+ *
+ * 为什么需要两份代码？
+ * - game.c用于训练时（通过ctypes调用）
+ * - model_ai.c用于推理时（玩家对战模式）
+ * - 两者必须完全一致，否则训练和推理结果不同
+ *
+ * 参数：
+ * @param game     - 游戏状态
+ * @param tank_id  - AI坦克ID（通常是玩家对战模式中的AI坦克）
+ * @param obs      - 输出：观察向量数组
+ * @param obs_size - 输出：观察向量维度（应该=43）
+ */
 static void game_state_to_observation(const GameState* game, int tank_id,
                                       float* obs, int* obs_size) {
     // 必须与 game.c 中的 game_get_observation 保持一致
@@ -343,13 +445,14 @@ static void game_state_to_observation(const GameState* game, int tank_id,
 
     const Tank* ai_tank = &game->tanks[tank_id];
 
-    // AI坦克状态 (6个值)
-    obs[idx++] = ai_tank->x / (float)game->map_width;
-    obs[idx++] = ai_tank->y / (float)game->map_height;
-    obs[idx++] = ai_tank->vx / 5.0f;  // TANK_SPEED = 5
-    obs[idx++] = ai_tank->vy / 5.0f;
-    obs[idx++] = (float)ai_tank->health / 100.0f;  // TANK_MAX_HEALTH = 100
-    obs[idx++] = ai_tank->shoot_cooldown > 0 ? 1.0f : 0.0f;
+    // ========== AI坦克状态 (6个值) ==========
+
+    obs[idx++] = ai_tank->x / (float)game->map_width;    // x位置归一化
+    obs[idx++] = ai_tank->y / (float)game->map_height;   // y位置归一化
+    obs[idx++] = ai_tank->vx / 5.0f;   // x速度归一化（TANK_SPEED = 5）
+    obs[idx++] = ai_tank->vy / 5.0f;   // y速度归一化
+    obs[idx++] = (float)ai_tank->health / 100.0f;  // 血量归一化（TANK_MAX_HEALTH = 100）
+    obs[idx++] = ai_tank->shoot_cooldown > 0 ? 1.0f : 0.0f;  // 冷却标志
 
     // 最近的5个敌人位置和状态 (5 * 5 = 25个值)
     float enemy_info[5][5] = {0};  // dx, dy, vx, vy, health
@@ -401,28 +504,62 @@ static void game_state_to_observation(const GameState* game, int tank_id,
     *obs_size = idx;  // 总共 6 + 25 + 12 = 43 维
 }
 
-// 获取模型AI的决策
+/*
+ * 获取模型AI的决策（推理入口）
+ *
+ * 【核心推理流程】
+ * 这是每帧调用的函数，实现：C状态 → Python模型 → C动作
+ *
+ * 数据流：
+ * 1. C: 游戏状态 → float数组(43维)
+ * 2. C→Py: float数组 → Python列表 → PyTorch tensor
+ * 3. Py: tensor → DQN网络 → 动作索引(0-8)
+ * 4. Py→C: 动作索引 → TankAction枚举
+ *
+ * 内存管理：
+ * - 所有PyObject*必须Py_DECREF释放
+ * - 遵循Python引用计数规则
+ * - 失败时清理已分配的对象
+ *
+ * 参数：
+ * @param ai      - 模型AI实例
+ * @param game    - 游戏状态
+ * @param tank_id - AI坦克ID
+ * @return 推荐的坦克动作
+ */
 TankAction model_ai_get_action(ModelAI* ai, const GameState* game, int tank_id) {
+    // 前置检查
     if (!ai->initialized || !ai->py_agent) {
         return ACTION_IDLE;
     }
 
-    // 获取游戏状态
-    float obs[128];
+    // ========== 步骤1：获取游戏状态（C数组）==========
+
+    float obs[128];  // 观察向量缓冲区（43维足够）
     int obs_size;
     game_state_to_observation(game, tank_id, obs, &obs_size);
 
-    // 创建numpy数组（通过Python列表）
+    // ========== 步骤2：C数组 → Python列表 ==========
+
     PyObject* obs_list = PyList_New(obs_size);
     for (int i = 0; i < obs_size; i++) {
+        // 创建Python float对象并加入列表
+        // PyList_SetItem会"偷取"引用，不需要DECREF
         PyList_SetItem(obs_list, i, PyFloat_FromDouble(obs[i]));
     }
 
-    // 转换为tensor
+    // ========== 步骤3：Python列表 → PyTorch tensor ==========
+
+    // 获取torch.tensor函数
     PyObject* torch_tensor_func = PyObject_GetAttrString(g_torch_module, "tensor");
+
+    // 创建参数元组（torch.tensor需要一个参数：数据）
     PyObject* tensor_args = PyTuple_Pack(1, obs_list);
+
+    // 调用torch.tensor([obs_list])
     PyObject* state_tensor = PyObject_CallObject(torch_tensor_func, tensor_args);
 
+    // 清理中间对象
     Py_DECREF(obs_list);
     Py_DECREF(tensor_args);
     Py_DECREF(torch_tensor_func);
@@ -433,7 +570,9 @@ TankAction model_ai_get_action(ModelAI* ai, const GameState* game, int tank_id) 
         return ACTION_IDLE;
     }
 
-    // 调用select_action方法
+    // ========== 步骤4：调用模型推理 ==========
+
+    // 获取DQNAgent的select_action方法
     PyObject* select_action_method = PyObject_GetAttrString((PyObject*)ai->py_agent,
                                                             "select_action");
     if (!select_action_method) {
@@ -443,13 +582,17 @@ TankAction model_ai_get_action(ModelAI* ai, const GameState* game, int tank_id) 
         return ACTION_IDLE;
     }
 
-    // 创建参数：(state, training=False)
+    // 创建位置参数元组：(state,)
     PyObject* action_args = PyTuple_Pack(1, state_tensor);
+
+    // 创建关键字参数字典：{training: False}
     PyObject* action_kwargs = PyDict_New();
     PyDict_SetItemString(action_kwargs, "training", Py_False);
 
+    // 调用agent.select_action(state, training=False)
     PyObject* action_result = PyObject_Call(select_action_method, action_args, action_kwargs);
 
+    // 清理
     Py_DECREF(state_tensor);
     Py_DECREF(select_action_method);
     Py_DECREF(action_args);
@@ -461,15 +604,18 @@ TankAction model_ai_get_action(ModelAI* ai, const GameState* game, int tank_id) 
         return ACTION_IDLE;
     }
 
-    // 获取动作值
+    // ========== 步骤5：Python整数 → C动作枚举 ==========
+
+    // 将Python int转换为C long
     long action = PyLong_AsLong(action_result);
     Py_DECREF(action_result);
 
-    // 映射到TankAction
+    // 验证动作范围（0-8对应ACTION_IDLE到ACTION_SHOOT_RIGHT）
     if (action >= 0 && action <= ACTION_SHOOT_RIGHT) {
         return (TankAction)action;
     }
 
+    // 无效动作，返回默认
     return ACTION_IDLE;
 }
 
