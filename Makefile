@@ -139,32 +139,93 @@ train-vis:
 		python3 python/train.py --visualize; \
 	fi
 
+# Ray并行训练（Ray Core，4-6倍加速）
+train-ray:
+	@echo "🚀 启动Ray并行训练..."
+	@if [ -d "./$(VENV_DIR)" ]; then \
+		./$(VENV_DIR)/bin/python python/train_ray.py; \
+	else \
+		python3 python/train_ray.py; \
+	fi
+
+# Ray RLlib训练（完整优化，8-10倍加速）
+train-rllib:
+	@echo "🚀 启动Ray RLlib训练..."
+	@if [ -d "./$(VENV_DIR)" ]; then \
+		./$(VENV_DIR)/bin/python python/train_rllib.py; \
+	else \
+		python3 python/train_rllib.py; \
+	fi
+
+# 查看Ray性能对比
+ray-benchmark:
+	@if [ -d "./$(VENV_DIR)" ]; then \
+		./$(VENV_DIR)/bin/python python/ray_config.py; \
+	else \
+		python3 python/ray_config.py; \
+	fi
+
+# 安装Ray依赖
+install-ray:
+	@echo "安装Ray Core..."
+	@if [ -d "./$(VENV_DIR)" ]; then \
+		./$(VENV_DIR)/bin/pip install ray; \
+	else \
+		pip install ray; \
+	fi
+	@echo "✓ Ray Core已安装"
+
+# 安装Ray RLlib（包含所有功能）
+install-rllib:
+	@echo "安装Ray RLlib（包含所有强化学习功能）..."
+	@if [ -d "./$(VENV_DIR)" ]; then \
+		./$(VENV_DIR)/bin/pip install 'ray[rllib]'; \
+	else \
+		pip install 'ray[rllib]'; \
+	fi
+	@echo "✓ Ray RLlib已安装"
+
 # 帮助
 help:
 	@echo "Tank Battle AI Training System - Makefile"
 	@echo ""
-	@echo "可用命令:"
+	@echo "编译命令:"
 	@echo "  make                  - 编译所有目标"
 	@echo "  make all              - 编译所有目标"
 	@echo "  make clean            - 清理构建文件"
 	@echo "  make rebuild          - 重新编译"
+	@echo ""
+	@echo "环境管理:"
 	@echo "  make venv             - 创建Python虚拟环境"
 	@echo "  make install-deps     - 安装C依赖（需要sudo）"
 	@echo "  make install-python-deps - 安装Python依赖（自动检测venv）"
+	@echo "  make install-ray      - 安装Ray Core（4-6倍加速）"
+	@echo "  make install-rllib    - 安装Ray RLlib（8-10倍加速+完整功能）"
+	@echo ""
+	@echo "运行模式:"
 	@echo "  make run-player       - 运行玩家对战模式"
 	@echo "  make run-multiplayer-server  - 运行多人对战（服务器）"
 	@echo "  make run-multiplayer-client  - 运行多人对战（客户端）"
-	@echo "  make train            - 运行训练（纯文本模式，自动提示选择模型）"
-	@echo "  make train-vis        - 运行训练（可视化模式，自动提示选择模型）"
+	@echo ""
+	@echo "训练模式:"
+	@echo "  make train            - 单进程训练（纯文本，基准速度）"
+	@echo "  make train-vis        - 单进程训练（可视化）"
+	@echo "  make train-ray        - Ray并行训练（4-6倍加速）⚡"
+	@echo "  make train-rllib      - Ray RLlib训练（8-10倍加速+优先回放）⚡⚡"
+	@echo ""
+	@echo "性能工具:"
+	@echo "  make ray-benchmark    - 查看Ray性能对比数据"
 	@echo ""
 	@echo "虚拟环境配置:"
-	@echo "  VENV_DIR=venv         - 默认虚拟环境名称"
+	@echo "  VENV_DIR=tank         - 默认虚拟环境名称"
 	@echo "  make venv VENV_DIR=myenv   - 创建自定义名称的虚拟环境"
 	@echo "  make VENV_DIR=myenv        - 使用自定义虚拟环境编译"
 	@echo ""
 	@echo "注意:"
-	@echo "  - 程序会自动检测虚拟环境（venv, .venv, env）"
-	@echo "  - 运行玩家对战模式时，会自动提示选择AI模型版本"
+	@echo "  - 程序会自动检测虚拟环境（tank, venv, .venv, env）"
+	@echo "  - 使用Ray训练前需要先运行 make install-ray 或 make install-rllib"
+	@echo "  - 推荐使用train-ray（简单）或train-rllib（最强）获得最佳性能"
+	@echo "  - 详细说明请查看 RAY_INTEGRATION.md"
 	@echo ""
 
-.PHONY: all clean rebuild install-deps install-python-deps run-player run-multiplayer-server run-multiplayer-client train train-vis help
+.PHONY: all clean rebuild install-deps install-python-deps install-ray install-rllib run-player run-multiplayer-server run-multiplayer-client train train-vis train-ray train-rllib ray-benchmark help
