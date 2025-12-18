@@ -62,6 +62,8 @@ void enemy_ai_init(EnemyAI* ai, Tank* target);
  * @param bullets: 所有子弹数组，用于躲避检测
  * @param bullet_count: 子弹数量
  * @param current_frame: 当前游戏帧数，用于行为延迟
+ * @param map_width: 地图宽度，用于墙壁避让
+ * @param map_height: 地图高度，用于墙壁避让
  * @return: 决策的动作（移动或射击）
  * 决策流程：
  *   1. 检测危险子弹，优先躲避
@@ -72,10 +74,11 @@ void enemy_ai_init(EnemyAI* ai, Tank* target);
  *   - 近距离：优先射击
  *   - 中远距离：接近目标
  *   - 子弹来袭：垂直躲避
+ *   - 靠近墙壁：自动避让
  */
 TankAction enemy_ai_update(EnemyAI* ai, Tank* enemy_tank, Tank* tanks,
                            int tank_count, Bullet* bullets, int bullet_count,
-                           int current_frame);
+                           int current_frame, int map_width, int map_height);
 
 /*
  * 尝试预测射击（提前量算法）

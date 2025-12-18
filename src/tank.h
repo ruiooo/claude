@@ -72,6 +72,8 @@ typedef struct {
     TankType type;           // 坦克类型，决定控制方式和渲染颜色
     Direction direction;     // 当前朝向，影响渲染和子弹发射方向
     int shoot_cooldown;      // 射击冷却计数器（帧数），>0时无法射击，每帧递减
+    int action_cooldown;     // 动作切换冷却（帧数），>0时限制移动或射击，实现动作互斥
+    int direction_change_cooldown; // 方向转变冷却（帧数），>0时不能改变方向，防止频繁转向
     int model_version;       // 模型版本号，用于自我对弈时标识历史版本AI（0表示最新）
     int id;                  // 坦克唯一标识符，用于子弹所有权追踪和碰撞检测
 } Tank;
@@ -82,7 +84,9 @@ typedef struct {
 #define TANK_SIZE 32            // 坦克尺寸（像素），正方形边长
 #define TANK_SPEED 2.5f         // 坦克移动速度（像素/帧），影响移动的流畅度和灵活性
 #define TANK_MAX_HEALTH 3       // 坦克最大血量，初始血量和血量上限
-#define SHOOT_COOLDOWN 15       // 射击冷却时间（帧数），15帧约0.25秒（60fps下）
+#define SHOOT_COOLDOWN 20       // 射击冷却时间（帧数），20帧（60fps下）- 降低射击频率
+#define ACTION_COOLDOWN 10      // 动作切换冷却（帧数），射击后10帧内不能移动，移动后10帧内不能射击
+#define DIR_CHANGE_COOLDOWN 5   // 方向转变冷却（帧数），转向后5帧内不能再次转向，防止频繁转向
 
 /*
  * 坦克功能函数声明

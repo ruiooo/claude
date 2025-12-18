@@ -41,6 +41,10 @@
 #include "game.h"
 #include "rendering.h"
 #include "model_ai.h"
+#include "ai_interface.h"  // 用于调用完整的奖励计算函数
+
+// 手动声明追踪AI函数（避免循环依赖）
+TankAction enemy_ai_get_action(GameState* game, int tank_index);
 
 // ====================================================================
 // 常量定义
@@ -212,6 +216,9 @@ bool recorder_save(ExperienceRecorder* recorder) {
     printf("\n✓ 已保存 %d 条人类经验到 %s\n", recorder->count, recorder->filename);
     printf("  总计记录: %d 条经验\n", recorder->total_recorded);
 
+    // ✅ 保存后立即重置计数，避免重复保存
+    recorder->count = 0;
+
     return true;
 }
 
@@ -219,15 +226,13 @@ bool recorder_save(ExperienceRecorder* recorder) {
 void recorder_reset(ExperienceRecorder* recorder) {
     if (!recorder->enabled) return;
 
-    // 如果有数据，先保存
-    if (recorder->count > 0) {
-        recorder_save(recorder);
-    }
+    // ✅ 注意：recorder_save() 已经在游戏结束时调用并重置了count
+    // 这里只需要生成新文件名即可，无需再次保存
 
-    // 重置计数
+    // 重置计数（防御性编程，确保清零）
     recorder->count = 0;
 
-    // 生成新文件名
+    // 生成新文件名（准备下一局的数据记录）
     time_t now = time(NULL);
     snprintf(recorder->filename, sizeof(recorder->filename),
              "human_data/experience_%ld.dat", now);
@@ -348,22 +353,14 @@ static void game_state_to_observation_for_recording(const GameState* game, int t
     // 总共应该是 6 + 25 + 12 = 43 维
 }
 
-// 计算玩家奖励（简化版）
-float calculate_player_reward(const GameState* game, int player_id) {
-    const Tank* player = &game->tanks[player_id];
+// 计算玩家奖励（使用完整的奖励塑形系统）
+// 注意：此函数现在已弃用，直接使用 ai_interface.c 中的 calculate_reward()
+float calculate_player_reward(GameState* game, int player_id, int prev_health, int prev_enemies) {
+    Tank* player = &game->tanks[player_id];
 
-    // 存活奖励
-    if (!player->alive) {
-        return -100.0f;
-    }
-
-    // 基础存活奖励
-    float reward = 0.01f;
-
-    // 这里可以添加更复杂的奖励计算
-    // 比如: 击中敌人、躲避子弹等
-
-    return reward;
+    // 调用AI训练使用的完整奖励函数
+    // 这确保人类数据和AI训练使用完全一致的奖励信号
+    return calculate_reward(game, player, prev_health, prev_enemies);
 }
 
 // 处理玩家输入并返回动作
@@ -395,12 +392,12 @@ TankAction get_player_input(const Uint8* keys, Tank* player_tank) {
 // 开始新回合
 void start_new_round(GameState* game, GameProgress* progress) {
     printf("\n========== 第 %d 局 ==========\n", progress->wins + 1);
-    printf("AI坦克数量: %d (使用模型: %s)\n",
-           progress->current_ai_count, progress->model_path);
+    printf("敌人: 🔴 DQN模型坦克 + 🟥 追踪AI坦克\n");
+    printf("模型: %s\n", progress->model_path);
 
     snprintf(progress->message, sizeof(progress->message),
-             "Round %d - AI Tanks: %d | Wins: %d/%d",
-             progress->wins + 1, progress->current_ai_count, progress->wins, WIN_TARGET);
+             "Round %d | Wins: %d",
+             progress->wins + 1, progress->wins);
 
     // 重置游戏
     game_reset(game, 0);  // 先不创建敌人
@@ -418,39 +415,65 @@ void start_new_round(GameState* game, GameProgress* progress) {
         }
     }
 
-    // 创建AI训练模型控制的坦克
-    for (int i = 0; i < progress->current_ai_count && i < MAX_AI_TANKS; i++) {
-        float x, y;
-        int edge = rand() % 4;
+    // ========== 创建固定的2个AI敌人 ==========
 
-        switch (edge) {
-            case 0: // 上边
-                x = rand() % (game->map_width - TANK_SIZE);
-                y = TANK_SIZE;
-                break;
-            case 1: // 下边
-                x = rand() % (game->map_width - TANK_SIZE);
-                y = game->map_height - TANK_SIZE * 2;
-                break;
-            case 2: // 左边
-                x = game->map_width - TANK_SIZE * 2;
-                y = rand() % (game->map_height - TANK_SIZE);
-                break;
-            case 3: // 右边
-                x = game->map_width - TANK_SIZE * 2;
-                y = rand() % (game->map_height - TANK_SIZE);
-                break;
-        }
-
-        tank_init(&game->tanks[game->tank_count], x, y, TANK_TYPE_ENEMY);
-
-        // 初始化AI模型
-        if (!model_ai_init(&progress->ai_models[i], progress->model_path)) {
-            fprintf(stderr, "警告: AI模型 %d 初始化失败\n", i);
-        }
-
-        game->tank_count++;
+    // 1. DQN模型坦克（深红色 - TANK_TYPE_SELF_PLAY）
+    float x1, y1;
+    int edge1 = rand() % 4;
+    switch (edge1) {
+        case 0: // 上边
+            x1 = rand() % (game->map_width - TANK_SIZE);
+            y1 = TANK_SIZE;
+            break;
+        case 1: // 下边
+            x1 = rand() % (game->map_width - TANK_SIZE);
+            y1 = game->map_height - TANK_SIZE * 2;
+            break;
+        case 2: // 左边
+            x1 = TANK_SIZE;
+            y1 = rand() % (game->map_height - TANK_SIZE);
+            break;
+        case 3: // 右边
+            x1 = game->map_width - TANK_SIZE * 2;
+            y1 = rand() % (game->map_height - TANK_SIZE);
+            break;
     }
+
+    // 使用 TANK_TYPE_SELF_PLAY 类型（深红色）
+    tank_init(&game->tanks[game->tank_count], x1, y1, TANK_TYPE_SELF_PLAY);
+
+    // 初始化DQN模型
+    if (!model_ai_init(&progress->ai_models[0], progress->model_path)) {
+        fprintf(stderr, "警告: DQN模型初始化失败\n");
+    }
+
+    game->tank_count++;
+
+    // 2. 传统追踪AI坦克（浅红色 - TANK_TYPE_ENEMY）
+    float x2, y2;
+    int edge2 = rand() % 4;
+    switch (edge2) {
+        case 0: // 上边
+            x2 = rand() % (game->map_width - TANK_SIZE);
+            y2 = TANK_SIZE;
+            break;
+        case 1: // 下边
+            x2 = rand() % (game->map_width - TANK_SIZE);
+            y2 = game->map_height - TANK_SIZE * 2;
+            break;
+        case 2: // 左边
+            x2 = TANK_SIZE;
+            y2 = rand() % (game->map_height - TANK_SIZE);
+            break;
+        case 3: // 右边
+            x2 = game->map_width - TANK_SIZE * 2;
+            y2 = rand() % (game->map_height - TANK_SIZE);
+            break;
+    }
+
+    // 使用 TANK_TYPE_ENEMY 类型（浅红色，使用传统追踪AI）
+    tank_init(&game->tanks[game->tank_count], x2, y2, TANK_TYPE_ENEMY);
+    game->tank_count++;
 
     progress->game_active = true;
 }
@@ -459,7 +482,10 @@ int main(int argc, char* argv[]) {
     srand(time(NULL));
 
     printf("========================================\n");
-    printf("  坦克大战 - 玩家 vs AI 挑战模式\n");
+    printf("  坦克大战 - 玩家 vs AI 对战模式\n");
+    printf("========================================\n");
+    printf("  操作: W/A/S/D - 移动, 空格 - 射击\n");
+    printf("  敌人: 🔴 深红色(DQN模型) | 🟥 浅红色(追踪AI)\n");
     printf("========================================\n");
 
     // 初始化Python模型AI系统
@@ -561,7 +587,7 @@ int main(int argc, char* argv[]) {
     // 初始化进度跟踪
     GameProgress progress = {0};
     progress.wins = 0;
-    progress.current_ai_count = 1;  // 从1个AI开始
+    progress.current_ai_count = 2;  // 固定2个AI（1个DQN模型 + 1个传统追踪AI）
     strncpy(progress.model_path, selected_model, sizeof(progress.model_path) - 1);
 
     // 初始化AI模型数组
@@ -631,19 +657,52 @@ int main(int argc, char* argv[]) {
                 }
             }
 
+            // 记录更新前的玩家状态（用于奖励计算）
+            int prev_health = 0;
+            int prev_enemies = 0;
+            if (should_record && player_action != ACTION_IDLE && player_tank && player_tank->alive) {
+                prev_health = player_tank->health;
+                prev_enemies = game_get_alive_count(&game, TANK_TYPE_ENEMY) +
+                              game_get_alive_count(&game, TANK_TYPE_SELF_PLAY);
+            }
+
             // AI坦克控制
-            int ai_index = 0;
+            static bool ai_debug_shown = false;
+            static int action_count = 0;  // 调试：统计动作次数
             for (int i = 0; i < game.tank_count; i++) {
-                if (game.tanks[i].type == TANK_TYPE_ENEMY && game.tanks[i].alive) {
-                    if (ai_index < MAX_AI_TANKS && progress.ai_models[ai_index].initialized) {
-                        // 使用模型AI获取动作
-                        TankAction action = model_ai_get_action(&progress.ai_models[ai_index],
-                                                                &game, i);
-                        if (action != ACTION_IDLE) {
-                            game_execute_action(&game, i, action);
+                if (!game.tanks[i].alive) continue;
+
+                if (game.tanks[i].type == TANK_TYPE_SELF_PLAY) {
+                    // DQN模型坦克（深红色）- 使用训练好的模型
+                    if (progress.ai_models[0].initialized) {
+                        if (!ai_debug_shown) {
+                            printf("✓ 模型AI已加载，开始推理\n");
+                        }
+                        TankAction action = model_ai_get_action(&progress.ai_models[0], &game, i);
+
+                        // 调试输出：前10次动作
+                        if (action_count < 10) {
+                            printf("  [调试] 模型AI动作: %d (IDLE=0, 移动=1-4, 射击=5-8)\n", action);
+                            action_count++;
+                        }
+
+                        // ✅ 修复：ACTION_IDLE也应该执行（可能用于观察/等待）
+                        game_execute_action(&game, i, action);
+                    } else {
+                        // ⚠️ 模型未初始化
+                        if (!ai_debug_shown) {
+                            printf("⚠️ 警告：模型AI未初始化！\n");
                         }
                     }
-                    ai_index++;
+                } else if (game.tanks[i].type == TANK_TYPE_ENEMY) {
+                    // 传统追踪AI坦克（浅红色）- 使用传统追踪算法
+                    if (!ai_debug_shown) {
+                        printf("✓ 追踪AI已激活\n");
+                        ai_debug_shown = true;
+                    }
+                    TankAction action = enemy_ai_get_action(&game, i);
+                    // 追踪AI也应该执行所有动作
+                    game_execute_action(&game, i, action);
                 }
             }
 
@@ -655,7 +714,8 @@ int main(int argc, char* argv[]) {
                 float next_state[43] = {0};
                 game_state_to_observation_for_recording(&game, player_id, next_state);
 
-                float reward = calculate_player_reward(&game, player_id);
+                // 使用完整的奖励函数（与AI训练一致）
+                float reward = calculate_player_reward(&game, player_id, prev_health, prev_enemies);
                 int done = game.game_over ? 1 : 0;
 
                 recorder_add(&recorder, current_state, player_action, reward, next_state, done);
@@ -685,60 +745,42 @@ int main(int argc, char* argv[]) {
             if (player_alive) {
                 // 玩家获胜
                 progress.wins++;
-                printf("✓ 第 %d 局胜利！ (连胜: %d/%d)\n", progress.wins, progress.wins, WIN_TARGET);
-
-                if (progress.wins >= WIN_TARGET) {
-                    // 最终胜利
-                    printf("\n========================================\n");
-                    printf("  🎉 恭喜！你战胜了所有挑战！\n");
-                    printf("  最终连胜: %d 局\n", progress.wins);
-                    printf("  最高AI数量: %d\n", progress.current_ai_count);
-                    printf("========================================\n");
-                    snprintf(progress.message, sizeof(progress.message),
-                             "VICTORY! You defeated all challenges!");
-                } else {
-                    // 准备下一回合
-                    progress.current_ai_count++;
-                    snprintf(progress.message, sizeof(progress.message),
-                             "Round %d WIN! Next: %d AI tanks",
-                             progress.wins, progress.current_ai_count);
-                }
-            } else {
-                // 玩家失败
-                printf("✗ 挑战失败！(在第 %d 局)\n", progress.wins + 1);
                 printf("\n========================================\n");
-                printf("  游戏结束\n");
-                printf("  最终成绩: 连胜 %d 局\n", progress.wins);
-                printf("  最高AI数量: %d\n", progress.current_ai_count);
+                printf("  ✅ 第 %d 局 - 胜利！\n", progress.wins);
+                printf("========================================\n");
+                printf("  按 Enter 继续下一局 | 按 ESC 退出\n");
                 printf("========================================\n");
                 snprintf(progress.message, sizeof(progress.message),
-                         "GAME OVER - Final Score: %d wins", progress.wins);
+                         "Round %d WIN! Press ENTER to continue or ESC to quit", progress.wins);
+            } else {
+                // 玩家失败
+                printf("\n========================================\n");
+                printf("  ❌ 第 %d 局 - 失败\n", progress.wins + 1);
+                printf("========================================\n");
+                printf("  总战绩: %d 胜\n", progress.wins);
+                printf("  按 Enter 重新开始 | 按 ESC 退出\n");
+                printf("========================================\n");
+                snprintf(progress.message, sizeof(progress.message),
+                         "Round %d LOSS! Press ENTER to retry or ESC to quit", progress.wins + 1);
             }
         }
 
-        // 显示结果后自动开始下一回合或结束
-        if (show_result && SDL_GetTicks() - result_start_time > 3000) {
-            show_result = false;
+        // 等待用户按键决定是否继续
+        if (show_result) {
+            // 检查是否按下 Enter 键继续
+            if (keys[SDL_SCANCODE_RETURN]) {
+                show_result = false;
 
-            // 检查是否继续
-            bool player_alive = false;
-            for (int i = 0; i < game.tank_count; i++) {
-                if (game.tanks[i].type == TANK_TYPE_PLAYER && game.tanks[i].alive) {
-                    player_alive = true;
-                    break;
-                }
-            }
-
-            if (player_alive && progress.wins < WIN_TARGET) {
                 // 重置经验记录器准备下一回合
                 if (recorder.enabled) {
                     recorder_reset(&recorder);
                 }
-                // 开始下一回合
+
+                // 开始新回合（无论上一回合胜负）
                 start_new_round(&game, &progress);
-            } else {
-                // 游戏结束
-                running = false;
+
+                // 延迟一下，避免重复触发
+                SDL_Delay(200);
             }
         }
 
@@ -756,6 +798,12 @@ int main(int argc, char* argv[]) {
     }
 
     // 清理
+    // ✅ 退出前保存未完成的回合数据（如果有）
+    if (recorder.enabled && recorder.count > 0) {
+        printf("\n⚠️  检测到未保存的经验数据，正在保存...\n");
+        recorder_save(&recorder);
+    }
+
     // 清理经验记录器
     recorder_cleanup(&recorder);
 

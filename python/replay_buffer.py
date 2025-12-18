@@ -118,8 +118,14 @@ class ReplayBuffer:
         # done=0.0: 该回合未结束
         self.dones = np.zeros(capacity, dtype=np.float32)
 
+        # ✅ 数据来源标记: [capacity]
+        # 用于区分人类数据和AI数据
+        # 0: AI生成的数据
+        # 1: 人类专家数据
+        self.sources = np.zeros(capacity, dtype=np.int8)
+
         # 总内存占用估算:
-        # (172 + 4 + 4 + 172 + 4) * capacity = 356 * capacity bytes
+        # (172 + 4 + 4 + 172 + 4 + 1) * capacity = 357 * capacity bytes
         # 100,000条经验 ≈ 34 MB (完全可以接受)
 
         # ========== 循环缓冲区指针 ==========
@@ -133,8 +139,18 @@ class ReplayBuffer:
         # 用于判断是否有足够数据进行训练
         self.size = 0
 
+        # ========== 周期性人类数据控制 ==========
+        # 控制是否在当前采样中包含人类数据
+        # True: 采样包含人类数据，False: 只采样AI数据
+        self.include_human_data = True
+
+        # ✅ 性能优化：缓存AI数据索引，避免每次采样都扫描
+        # 维护一个AI数据索引列表，只在添加数据时更新
+        self._ai_indices_cache = []
+        self._cache_valid = False  # 缓存是否有效
+
     def push(self, state: np.ndarray, action: int, reward: float,
-             next_state: np.ndarray, done: bool):
+             next_state: np.ndarray, done: bool, source: int = 0):
         """
         添加一条经验到缓冲区
 
@@ -164,17 +180,25 @@ class ReplayBuffer:
             done: 是否结束
                 - True: 游戏结束（胜利/失败）
                 - False: 游戏继续
+            source: 数据来源
+                - 0: AI生成的数据（默认）
+                - 1: 人类专家数据
 
         示例:
+            # AI数据
             buffer.push(
                 state=[0.5, 0.3, ...],
                 action=1,
                 reward=0.02,
                 next_state=[0.5, 0.35, ...],
-                done=False
+                done=False,
+                source=0
             )
+            # 人类数据
+            buffer.push(..., source=1)
         """
-        # 获取当前写入位置
+        # 获取当前写入位置（简化逻辑，移除永久保留）
+        # 优化：允许覆盖人类数据，通过高采样权重保证利用率
         idx = self.position
 
         # 将数据写入对应位置
@@ -188,6 +212,9 @@ class ReplayBuffer:
         # 原因: GPU计算时float更高效
         self.dones[idx] = 1.0 if done else 0.0
 
+        # ✅ 记录数据来源
+        self.sources[idx] = source
+
         # 更新写入位置（循环）
         # (position + 1) % capacity 实现循环:
         # - position=0,1,2,...,capacity-2,capacity-1,0,1,2,...
@@ -199,6 +226,22 @@ class ReplayBuffer:
         # 前capacity次push: size递增
         # 之后: size保持capacity
         self.size = min(self.size + 1, self.capacity)
+
+        # ✅ 性能优化：标记缓存失效（有新数据添加）
+        self._cache_valid = False
+
+    def _update_ai_indices_cache(self):
+        """
+        更新AI数据索引缓存
+
+        性能优化：避免每次采样都扫描整个缓冲区
+        - 只在缓存失效时调用一次
+        - 缓存结果供多次采样使用
+        """
+        if not self._cache_valid:
+            # 找出所有AI数据（source=0）的索引
+            self._ai_indices_cache = np.where(self.sources[:self.size] == 0)[0]
+            self._cache_valid = True
 
     def sample(self, batch_size: int):
         """
@@ -236,16 +279,29 @@ class ReplayBuffer:
             # actions.shape = [256]
             # rewards.shape = [256]
         """
-        # 随机生成batch_size个索引
-        # np.random.choice: 从[0, size)中无放回随机抽取
-        # - size: 缓冲区当前大小
-        # - batch_size: 抽取数量
-        # - replace=False: 不放回抽样（每个经验最多被抽一次）
-        #
-        # 为什么用size而不是capacity?
-        # - 缓冲区未满时，只有前size个位置有有效数据
-        # - 从未填充的位置采样会得到全0数据（错误）
-        indices = np.random.choice(self.size, batch_size, replace=False)
+        # ✅ 周期性人类数据控制：根据标志决定采样范围
+        if not self.include_human_data:
+            # 只采样AI数据（source=0）
+            # ✅ 性能优化：使用缓存的AI索引，避免重复扫描
+            self._update_ai_indices_cache()
+            ai_indices = self._ai_indices_cache
+
+            # 如果AI数据不足batch_size，使用有放回采样
+            if len(ai_indices) < batch_size:
+                indices = np.random.choice(ai_indices, batch_size, replace=True)
+            else:
+                indices = np.random.choice(ai_indices, batch_size, replace=False)
+        else:
+            # 正常采样（包含所有数据）
+            # np.random.choice: 从[0, size)中无放回随机抽取
+            # - size: 缓冲区当前大小
+            # - batch_size: 抽取数量
+            # - replace=False: 不放回抽样（每个经验最多被抽一次）
+            #
+            # 为什么用size而不是capacity?
+            # - 缓冲区未满时，只有前size个位置有有效数据
+            # - 从未填充的位置采样会得到全0数据（错误）
+            indices = np.random.choice(self.size, batch_size, replace=False)
 
         # 使用fancy indexing批量提取数据
         # numpy的高级索引非常高效（向量化操作）
@@ -345,6 +401,41 @@ class ReplayBuffer:
         # 重置实际大小为0
         self.size = 0
 
+    def get_source_stats(self):
+        """
+        获取缓冲区中数据来源的统计信息
+
+        Returns:
+            dict: {
+                'human_count': 人类数据数量,
+                'ai_count': AI数据数量,
+                'human_ratio': 人类数据比例,
+                'total': 总数据量
+            }
+
+        示例:
+            stats = buffer.get_source_stats()
+            print(f"人类数据: {stats['human_ratio']:.1%}")
+        """
+        if self.size == 0:
+            return {
+                'human_count': 0,
+                'ai_count': 0,
+                'human_ratio': 0.0,
+                'total': 0
+            }
+
+        # 统计人类数据数量（source=1）
+        human_count = int(np.sum(self.sources[:self.size] == 1))
+        ai_count = self.size - human_count
+
+        return {
+            'human_count': human_count,
+            'ai_count': ai_count,
+            'human_ratio': human_count / self.size if self.size > 0 else 0.0,
+            'total': self.size
+        }
+
 
 class PrioritizedReplayBuffer(ReplayBuffer):
     """
@@ -419,7 +510,7 @@ class PrioritizedReplayBuffer(ReplayBuffer):
         self.max_priority = 1.0
 
     def push(self, state: np.ndarray, action: int, reward: float,
-             next_state: np.ndarray, done: bool):
+             next_state: np.ndarray, done: bool, source: int = 0):
         """
         添加经验（使用最大优先级）
 
@@ -429,10 +520,10 @@ class PrioritizedReplayBuffer(ReplayBuffer):
         - 保证新经验至少被采样一次
 
         Args:
-            参数同ReplayBuffer.push
+            参数同ReplayBuffer.push（包括source）
         """
         # 调用父类push方法存储数据
-        super().push(state, action, reward, next_state, done)
+        super().push(state, action, reward, next_state, done, source)
 
         # 获取刚刚写入的位置
         # position已经前进了，所以-1

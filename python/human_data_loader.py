@@ -475,9 +475,9 @@ class HumanDataLoader:
         # range(len(states)): 0, 1, 2, ..., len-1
         for i in range(len(states)):
             # 调用缓冲区的push方法
-            # 将第i条经验添加到缓冲区
+            # 将第i条经验添加到缓冲区，标记source=1表示人类数据
             replay_buffer.push(states[i], actions[i], rewards[i],
-                             next_states[i], dones[i])
+                             next_states[i], dones[i], source=1)
 
         # ========== 打印完成信息 ==========
 

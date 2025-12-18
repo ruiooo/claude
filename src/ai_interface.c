@@ -76,8 +76,8 @@ void ai_reset_env(int enemy_count, float* obs, int* obs_size) {
  * @param prev_enemies- 上一帧敌人数（用于检测击杀）
  * @return 该步的总奖励值
  */
-static float calculate_reward(GameState* game, Tank* ai_tank, int prev_health,
-                              int prev_enemies) {
+float calculate_reward(GameState* game, Tank* ai_tank, int prev_health,
+                       int prev_enemies) {
     float reward = 0.0f;
 
     // 死亡直接返回巨大惩罚
@@ -87,9 +87,10 @@ static float calculate_reward(GameState* game, Tank* ai_tank, int prev_health,
 
     // ========== 基础奖励（稀疏信号）==========
 
-    // 存活奖励：每帧+0.02，鼓励AI尽可能活得久
-    // 计算：60fps下，存活1秒=60帧=1.2分
-    reward += 0.02f;
+    // 存活奖励：每帧+0.005，鼓励AI尽可能活得久
+    // ✅ 修复训练崩溃：从0.02降低到0.005，减少Q值膨胀
+    // 计算：60fps下，存活1秒=60帧=0.3分（合理范围）
+    reward += 0.005f;  // 原 0.02f
 
     // 血量变化检测
     int health_change = ai_tank->health - prev_health;

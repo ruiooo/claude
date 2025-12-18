@@ -170,12 +170,15 @@ void game_update(GameState* game) {
     for (int i = 0; i < game->tank_count; i++) {
         tank_update(&game->tanks[i]);
 
-        // 更新敌人AI
-        if (game->tanks[i].alive && game->tanks[i].type == TANK_TYPE_ENEMY) {
+        // ✅ 修复：玩家模式下，AI由main.c控制，这里不再重复控制
+        // 只在训练模式下更新敌人AI
+        if (game->mode != MODE_PLAYER &&
+            game->tanks[i].alive && game->tanks[i].type == TANK_TYPE_ENEMY) {
             TankAction action = enemy_ai_update(&game->enemy_ais[i], &game->tanks[i],
                                                game->tanks, game->tank_count,
                                                game->bullets, MAX_BULLETS,
-                                               game->frame_count);
+                                               game->frame_count,
+                                               game->map_width, game->map_height);
             game_execute_action(game, i, action);
         }
     }

@@ -98,6 +98,17 @@ bool check_bullet_tank_collision(Bullet* bullet, Tank* tank) {
     // 这样设计避免了"自杀"，提升游戏体验
     if (bullet->owner_id == tank->id) return false;
 
+    // ✅ AI坦克之间不互相伤害（玩家对战模式优化）
+    // 如果子弹发射者是AI（ENEMY或SELF_PLAY），目标也是AI，则不碰撞
+    bool owner_is_ai = (bullet->owner_type == TANK_TYPE_ENEMY ||
+                        bullet->owner_type == TANK_TYPE_SELF_PLAY);
+    bool target_is_ai = (tank->type == TANK_TYPE_ENEMY ||
+                         tank->type == TANK_TYPE_SELF_PLAY);
+
+    if (owner_is_ai && target_is_ai) {
+        return false;  // AI坦克之间不互相伤害
+    }
+
     return check_aabb_collision(bullet->x, bullet->y, bullet->width, bullet->height,
                                 tank->x, tank->y, tank->width, tank->height);
 }

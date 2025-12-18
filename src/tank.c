@@ -48,6 +48,8 @@ void tank_init(Tank* tank, float x, float y, TankType type) {
     tank->type = type;                    // 坦克类型
     tank->direction = DIR_UP;             // 初始朝向：向上
     tank->shoot_cooldown = 0;             // 射击冷却为0（可以立即射击）
+    tank->action_cooldown = 0;            // 动作切换冷却为0
+    tank->direction_change_cooldown = 0;  // 方向转变冷却为0（可以立即转向）
     tank->model_version = 0;              // 模型版本（用于自我对弈）
     tank->id = rand() % 10000;            // 随机ID，用于区分不同坦克
 }
@@ -74,6 +76,16 @@ void tank_update(Tank* tank) {
     // 更新射击冷却计时器（每帧递减1）
     if (tank->shoot_cooldown > 0) {
         tank->shoot_cooldown--;
+    }
+
+    // 更新动作切换冷却计时器（每帧递减1）
+    if (tank->action_cooldown > 0) {
+        tank->action_cooldown--;
+    }
+
+    // 更新方向转变冷却计时器（每帧递减1）
+    if (tank->direction_change_cooldown > 0) {
+        tank->direction_change_cooldown--;
     }
 
     // 应用速度到位置（欧拉积分法）
@@ -112,10 +124,12 @@ void tank_update(Tank* tank) {
  *   map_height - 地图高度（像素）
  *
  * 实现细节：
+ *   - 检测方向是否改变（与当前朝向比较）
  *   - 设置坦克朝向（用于渲染炮筒和射击）
  *   - 根据方向设置速度（TANK_SPEED = 2.5）
  *   - 预测下一帧位置，进行边界碰撞检测
  *   - 如果即将出界，停止该方向的移动（速度归零）
+ *   - 只有改变方向时才设置动作冷却（同方向连续移动可以射击）
  *
  * 边界检查：
  *   - 左边界：x < 0
@@ -125,6 +139,17 @@ void tank_update(Tank* tank) {
  */
 void tank_move(Tank* tank, Direction dir, int map_width, int map_height) {
     if (!tank->alive) return;  // 死亡的坦克不能移动
+
+    // ✅ 只有改变方向时才设置动作冷却
+    // 同一方向连续移动时不设置冷却，可以射击
+    bool direction_changed = (tank->direction != dir);
+
+    // ✅ 如果要改变方向，检查方向转变冷却
+    // 如果冷却中，不允许改变方向，保持当前方向移动
+    if (direction_changed && tank->direction_change_cooldown > 0) {
+        dir = tank->direction;  // 保持当前方向
+        direction_changed = false;  // 标记为未改变方向
+    }
 
     tank->direction = dir;  // 更新朝向（影响渲染和射击）
 
@@ -163,6 +188,13 @@ void tank_move(Tank* tank, Direction dir, int map_width, int map_height) {
     if (next_y < 0 || next_y + tank->height > map_height) {
         tank->vy = 0;  // 垂直方向停止
     }
+
+    // ✅ 只有改变方向时才设置动作冷却，同方向连续移动时不设置
+    if (direction_changed) {
+        tank->action_cooldown = ACTION_COOLDOWN;
+        // ✅ 设置方向转变冷却，防止频繁转向（如快速左右摇摆）
+        tank->direction_change_cooldown = DIR_CHANGE_COOLDOWN;
+    }
 }
 
 /**
@@ -198,11 +230,12 @@ void tank_take_damage(Tank* tank, int damage) {
  *   tank - 要检查的坦克指针
  *
  * 返回值：
- *   true  - 可以射击（存活且冷却完毕）
- *   false - 不可射击（死亡或冷却中）
+ *   true  - 可以射击（存活、射击冷却完毕、动作冷却完毕）
+ *   false - 不可射击（死亡、射击冷却中、或刚移动后）
  */
 bool tank_can_shoot(Tank* tank) {
-    return tank->alive && tank->shoot_cooldown == 0;
+    // ✅ 修改：增加动作冷却检查，刚移动后不能立即射击
+    return tank->alive && tank->shoot_cooldown == 0 && tank->action_cooldown == 0;
 }
 
 /**
@@ -213,7 +246,11 @@ bool tank_can_shoot(Tank* tank) {
  * 参数：
  *   tank - 刚射击的坦克指针
  *
- * 冷却时间：SHOOT_COOLDOWN = 15帧（约0.25秒 @ 60fps）
+ * 冷却时间：
+ *   SHOOT_COOLDOWN = 45帧（约0.75秒 @ 60fps）- 射击冷却
+ *
+ * 注意：
+ *   射击后不设置action_cooldown，允许立即移动
  */
 void tank_start_shoot_cooldown(Tank* tank) {
     tank->shoot_cooldown = SHOOT_COOLDOWN;

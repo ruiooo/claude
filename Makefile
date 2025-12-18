@@ -123,46 +123,22 @@ run-multiplayer-client: $(MULTIPLAYER_EXEC)
 	@echo "请输入服务器IP地址，然后运行："
 	@echo "  ./$(MULTIPLAYER_EXEC) client <服务器IP>"
 
-# 运行训练（纯文本模式）
+# 运行训练（使用Ray并行训练，AlphaGo风格分阶段）⚡⚡⚡
 train:
-	@if [ -d "./$(VENV_DIR)" ]; then \
-		./$(VENV_DIR)/bin/python python/train.py --no-visualize; \
-	else \
-		python3 python/train.py --no-visualize; \
-	fi
-
-# 运行训练（可视化模式）
-train-vis:
-	@if [ -d "./$(VENV_DIR)" ]; then \
-		./$(VENV_DIR)/bin/python python/train.py --visualize; \
-	else \
-		python3 python/train.py --visualize; \
-	fi
-
-# Ray并行训练（Ray Core，4-6倍加速）
-train-ray:
-	@echo "🚀 启动Ray并行训练..."
+	@echo "🚀 启动Ray并行训练（AlphaGo风格分阶段）..."
 	@if [ -d "./$(VENV_DIR)" ]; then \
 		./$(VENV_DIR)/bin/python python/train_ray.py; \
 	else \
 		python3 python/train_ray.py; \
 	fi
 
-# Ray RLlib训练（完整优化，8-10倍加速）
-train-rllib:
-	@echo "🚀 启动Ray RLlib训练..."
+# 诊断人类数据质量
+diagnose-human-data:
+	@echo "🔍 诊断人类数据质量..."
 	@if [ -d "./$(VENV_DIR)" ]; then \
-		./$(VENV_DIR)/bin/python python/train_rllib.py; \
+		./$(VENV_DIR)/bin/python python/diagnose_human_data.py; \
 	else \
-		python3 python/train_rllib.py; \
-	fi
-
-# 查看Ray性能对比
-ray-benchmark:
-	@if [ -d "./$(VENV_DIR)" ]; then \
-		./$(VENV_DIR)/bin/python python/ray_config.py; \
-	else \
-		python3 python/ray_config.py; \
+		python3 python/diagnose_human_data.py; \
 	fi
 
 # 安装Ray依赖
@@ -173,17 +149,7 @@ install-ray:
 	else \
 		pip install ray; \
 	fi
-	@echo "✓ Ray Core已安装"
-
-# 安装Ray RLlib（包含所有功能）
-install-rllib:
-	@echo "安装Ray RLlib（包含所有强化学习功能）..."
-	@if [ -d "./$(VENV_DIR)" ]; then \
-		./$(VENV_DIR)/bin/pip install 'ray[rllib]'; \
-	else \
-		pip install 'ray[rllib]'; \
-	fi
-	@echo "✓ Ray RLlib已安装"
+	@echo "✓ Ray Core已安装（训练将自动使用4-6倍加速）⚡"
 
 # 帮助
 help:
@@ -199,8 +165,7 @@ help:
 	@echo "  make venv             - 创建Python虚拟环境"
 	@echo "  make install-deps     - 安装C依赖（需要sudo）"
 	@echo "  make install-python-deps - 安装Python依赖（自动检测venv）"
-	@echo "  make install-ray      - 安装Ray Core（4-6倍加速）"
-	@echo "  make install-rllib    - 安装Ray RLlib（8-10倍加速+完整功能）"
+	@echo "  make install-ray      - 安装Ray依赖（训练加速必需）⚡"
 	@echo ""
 	@echo "运行模式:"
 	@echo "  make run-player       - 运行玩家对战模式"
@@ -208,13 +173,8 @@ help:
 	@echo "  make run-multiplayer-client  - 运行多人对战（客户端）"
 	@echo ""
 	@echo "训练模式:"
-	@echo "  make train            - 单进程训练（纯文本，基准速度）"
-	@echo "  make train-vis        - 单进程训练（可视化）"
-	@echo "  make train-ray        - Ray并行训练（4-6倍加速）⚡"
-	@echo "  make train-rllib      - Ray RLlib训练（8-10倍加速+优先回放）⚡⚡"
-	@echo ""
-	@echo "性能工具:"
-	@echo "  make ray-benchmark    - 查看Ray性能对比数据"
+	@echo "  make train            - Ray并行训练（AlphaGo风格分阶段）⚡⚡⚡"
+	@echo "  make diagnose-human-data - 诊断人类数据质量"
 	@echo ""
 	@echo "虚拟环境配置:"
 	@echo "  VENV_DIR=tank         - 默认虚拟环境名称"
@@ -223,9 +183,8 @@ help:
 	@echo ""
 	@echo "注意:"
 	@echo "  - 程序会自动检测虚拟环境（tank, venv, .venv, env）"
-	@echo "  - 使用Ray训练前需要先运行 make install-ray 或 make install-rllib"
-	@echo "  - 推荐使用train-ray（简单）或train-rllib（最强）获得最佳性能"
-	@echo "  - 详细说明请查看 RAY_INTEGRATION.md"
+	@echo "  - 训练前需要先运行 make install-ray 安装Ray依赖"
+	@echo "  - Ray并行训练提供8个worker并行采样，训练速度提升4-6倍"
 	@echo ""
 
-.PHONY: all clean rebuild install-deps install-python-deps install-ray install-rllib run-player run-multiplayer-server run-multiplayer-client train train-vis train-ray train-rllib ray-benchmark help
+.PHONY: all clean rebuild install-deps install-python-deps install-ray run-player run-multiplayer-server run-multiplayer-client train help

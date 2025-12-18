@@ -402,6 +402,35 @@ bool model_ai_init(ModelAI* ai, const char* model_path) {
 
     ai->initialized = true;
     printf("✓ 已加载AI模型: %s\n", model_path);
+
+    // ✅ 打印模型加载详细信息
+    PyObject* epsilon_attr = PyObject_GetAttrString((PyObject*)ai->py_agent, "epsilon");
+    PyObject* train_step_attr = PyObject_GetAttrString((PyObject*)ai->py_agent, "train_step");
+
+    if (epsilon_attr && train_step_attr) {
+        double original_epsilon = PyFloat_AsDouble(epsilon_attr);
+        long train_step = PyLong_AsLong(train_step_attr);
+        printf("  - 训练步数: %ld\n", train_step);
+        printf("  - 原始Epsilon值: %.4f ", original_epsilon);
+        if (original_epsilon > 0.5) {
+            printf("⚠️ (探索率过高)\n");
+        } else if (original_epsilon > 0.2) {
+            printf("(正常探索率)\n");
+        } else {
+            printf("(低探索率)\n");
+        }
+
+        // ✅ 【关键修复】推理模式下强制设置epsilon=0，完全利用策略
+        // 训练时需要探索，但推理时应该100%使用最优策略
+        printf("  - 推理模式：强制设置 Epsilon = 0.0 (纯利用模式)\n");
+        PyObject* zero = PyFloat_FromDouble(0.0);
+        PyObject_SetAttrString((PyObject*)ai->py_agent, "epsilon", zero);
+        Py_DECREF(zero);
+
+        Py_DECREF(epsilon_attr);
+        Py_DECREF(train_step_attr);
+    }
+
     return true;
 }
 
@@ -449,9 +478,9 @@ static void game_state_to_observation(const GameState* game, int tank_id,
 
     obs[idx++] = ai_tank->x / (float)game->map_width;    // x位置归一化
     obs[idx++] = ai_tank->y / (float)game->map_height;   // y位置归一化
-    obs[idx++] = ai_tank->vx / 5.0f;   // x速度归一化（TANK_SPEED = 5）
-    obs[idx++] = ai_tank->vy / 5.0f;   // y速度归一化
-    obs[idx++] = (float)ai_tank->health / 100.0f;  // 血量归一化（TANK_MAX_HEALTH = 100）
+    obs[idx++] = ai_tank->vx / TANK_SPEED;   // ✅ 修复：使用正确的 TANK_SPEED (2.5)
+    obs[idx++] = ai_tank->vy / TANK_SPEED;   // ✅ 修复：使用正确的 TANK_SPEED (2.5)
+    obs[idx++] = (float)ai_tank->health / (float)TANK_MAX_HEALTH;  // ✅ 修复：使用正确的 TANK_MAX_HEALTH (3)
     obs[idx++] = ai_tank->shoot_cooldown > 0 ? 1.0f : 0.0f;  // 冷却标志
 
     // 最近的5个敌人位置和状态 (5 * 5 = 25个值)
@@ -465,9 +494,9 @@ static void game_state_to_observation(const GameState* game, int tank_id,
 
             enemy_info[enemy_found][0] = dx / (float)game->map_width;
             enemy_info[enemy_found][1] = dy / (float)game->map_height;
-            enemy_info[enemy_found][2] = game->tanks[i].vx / 5.0f;
-            enemy_info[enemy_found][3] = game->tanks[i].vy / 5.0f;
-            enemy_info[enemy_found][4] = (float)game->tanks[i].health / 100.0f;
+            enemy_info[enemy_found][2] = game->tanks[i].vx / TANK_SPEED;  // ✅ 修复
+            enemy_info[enemy_found][3] = game->tanks[i].vy / TANK_SPEED;  // ✅ 修复
+            enemy_info[enemy_found][4] = (float)game->tanks[i].health / (float)TANK_MAX_HEALTH;  // ✅ 修复
             enemy_found++;
         }
     }
@@ -610,12 +639,34 @@ TankAction model_ai_get_action(ModelAI* ai, const GameState* game, int tank_id) 
     long action = PyLong_AsLong(action_result);
     Py_DECREF(action_result);
 
+    // ✅ 调试：打印前5次观察值和动作
+    static int debug_count = 0;
+    if (debug_count < 5) {
+        printf("\n[调试 %d] 推理详情：\n", debug_count);
+        printf("  观察值(前10维): ");
+        for (int i = 0; i < 10 && i < obs_size; i++) {
+            printf("%.3f ", obs[i]);
+        }
+        printf("\n  选择动作: %ld (IDLE=0, 移动=1-4, 射击=5-8)\n", action);
+
+        // 获取并打印epsilon值
+        PyObject* epsilon_attr = PyObject_GetAttrString((PyObject*)ai->py_agent, "epsilon");
+        if (epsilon_attr) {
+            double epsilon = PyFloat_AsDouble(epsilon_attr);
+            printf("  当前Epsilon: %.4f (探索率)\n", epsilon);
+            Py_DECREF(epsilon_attr);
+        }
+
+        debug_count++;
+    }
+
     // 验证动作范围（0-8对应ACTION_IDLE到ACTION_SHOOT_RIGHT）
     if (action >= 0 && action <= ACTION_SHOOT_RIGHT) {
         return (TankAction)action;
     }
 
     // 无效动作，返回默认
+    fprintf(stderr, "⚠️ 无效动作: %ld，使用IDLE\n", action);
     return ACTION_IDLE;
 }
 

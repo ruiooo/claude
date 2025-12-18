@@ -126,6 +126,23 @@ void ai_add_enemy(int enemy_type, int model_version);
 void ai_get_stats(int* ai_health, int* enemy_count, int* frame_count);
 
 /*
+ * 计算奖励值（完整的奖励塑形系统）
+ * @param game: 游戏状态
+ * @param ai_tank: AI坦克（或玩家坦克）
+ * @param prev_health: 上一帧血量（用于检测受伤）
+ * @param prev_enemies: 上一帧敌人数（用于检测击杀）
+ * @return 该步的总奖励值
+ * 功能：
+ *   - 基础奖励：存活(+0.02)、受伤(-15)、击杀(+100)、胜利(+300)、死亡(-100)
+ *   - 奖励塑形：距离(+0.5)、瞄准(+0.3)、射击(±0.5)、躲避(±0.4)、墙壁避让(+0.2)、动作多样性(+0.1)
+ * 用途：
+ *   - AI训练时计算奖励
+ *   - 人类数据记录时计算奖励（确保一致性）
+ */
+float calculate_reward(GameState* game, Tank* ai_tank, int prev_health,
+                       int prev_enemies);
+
+/*
  * 渲染当前帧（仅可视化模式）
  * 功能：
  *   - 如果启用了可视化，调用renderer_render_game

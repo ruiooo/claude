@@ -373,7 +373,8 @@ static void render_tank(Renderer* r, Tank* tank) {
 
     // 自我对弈坦克会显示其使用的模型版本号
     // 例如："v200"表示第200回合保存的模型
-    if (tank->type == TANK_TYPE_SELF_PLAY && r->small_font) {
+    // ✅ 只在训练模式下显示版本号（玩家对战模式不显示，避免乱码）
+    if (tank->type == TANK_TYPE_SELF_PLAY && r->small_font && tank->model_version > 0) {
         char version_text[16];
         snprintf(version_text, sizeof(version_text), "v%d", tank->model_version);
         SDL_Color white = {255, 255, 255, 255};  // 白色文本
