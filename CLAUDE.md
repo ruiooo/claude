@@ -146,18 +146,26 @@ src/
 
 ```
 python/
-├── config.py           - 训练配置 (超参数)
-├── model.py            - DQN 网络定义
-├── replay_buffer.py    - 经验回放缓冲区
-├── env_wrapper.py      - 游戏环境包装 (ctypes)
-├── enemy_manager.py    - 敌人管理 (动态难度/自我对弈)
-└── train.py            - 训练主循环
+├── config.py              - 训练配置 (超参数、网络架构)
+├── model.py               - DQN 网络定义和Agent
+├── replay_buffer.py       - 经验回放缓冲区
+├── env_wrapper.py         - 游戏环境包装 (ctypes)
+├── human_data_loader.py   - 人类数据加载器
+├── train_ray.py           - Ray分布式训练主循环（包含敌人管理）
+├── diagnose_model.py      - Q值诊断工具
+├── find_best_checkpoint.py - 批量checkpoint分析
+├── diagnose_human_data.py - 人类数据质量诊断
+├── plot_training.py       - 训练曲线可视化
+├── early_stopping.py      - 早停策略
+└── training_stages.py     - 分阶段训练配置
 ```
 
 **模块职责**:
 - `env_wrapper.py`: 通过 ctypes 调用 C 共享库,包装成 Python 环境
 - `model.py`: DQN 网络和 Agent,负责策略选择和训练
-- `train.py`: 主训练循环,整合所有组件
+- `train_ray.py`: Ray分布式训练主循环,整合所有组件（包含敌人管理和动态难度）
+- `diagnose_model.py`: Q值诊断工具,检测训练崩溃
+- `find_best_checkpoint.py`: 批量分析历史checkpoint,找到最佳模型
 
 ## 编码规范
 
@@ -260,7 +268,9 @@ Python 环境包装 (env_wrapper.py)
     ↓
 DQN Agent (model.py)
     ↓ GPU
-PyTorch 训练 (train.py)
+PyTorch 训练 (train_ray.py)
+    ↓ 监控
+诊断工具 (diagnose_model.py)
 ```
 
 ### 2. 训练循环
@@ -307,7 +317,7 @@ if (game_over && winner == 0)
 
 ### 历史版本管理
 
-**保存规则** (python/enemy_manager.py):
+**保存规则** (python/train_ray.py (enemy management integrated)):
 - 每 200 回合保存一个历史版本
 - 最多保存 10 个历史版本
 - 超过时删除最老的版本
@@ -485,152 +495,172 @@ HUMAN_LEARNING_CONFIG = {
 2. 减小 buffer_size: `TRAINING_CONFIG['buffer_size'] = 50000`
 3. 使用 CPU 训练: `TRAINING_CONFIG['device'] = 'cpu'`
 
-### 4. 训练胜率持续下降或长期低迷
+### 4. 训练崩溃诊断与修复 ⭐
 
-**问题**: 训练数千回合后胜率仍然很低（<30%），或者越训练胜率越低
+**问题**: 训练后模型推理时一直选择IDLE，或者训练胜率很高但评估胜率很低
 
 **症状**:
-- 3500回合训练后胜率仅20%
-- Epsilon已降到0.1-0.2，但胜率没有提升
-- 网络权重差异接近0，疑似停止学习
+- 推理时AI一直不动或重复单一动作
+- 训练胜率78%+，但评估胜率<10%
+- 所有动作Q值几乎相同（差异<0.5）
+- Q值异常高（如+70）或异常低
 
-**根本原因分析**:
+**根本原因**:
+1. **存活奖励过高** → Q值膨胀
+2. **网络容量过大** → 过拟合
+3. **Epsilon过早衰减** → 策略固化
+4. **模型无法区分动作价值** → 训练崩溃
 
-1. **Epsilon衰减过快** (最常见)
-   - 问题: AI过早停止探索，固化在次优策略上
-   - 现象: Epsilon在1000回合内就降到<0.1
-   - 后果: 当动态难度增加时，AI无法学习新策略
+---
 
-2. **动态难度增加过快**
-   - 问题: 连续胜利后敌人数量增加太快
-   - 现象: AI还没学好就要面对更强敌人
-   - 后果: 学习不稳定，胜率下降
+#### 诊断工具
 
-3. **自我对弈干扰**
-   - 问题: 历史版本模型过强
-   - 现象: 新训练的模型被历史版本碾压
-   - 后果: 无法建立有效策略
-
-**诊断工具**:
+**单模型诊断**:
 ```bash
-# 检查训练状态
-python python/check_progress.py
-
-# 深度诊断
-python python/deep_diagnose.py
+./tank/bin/python3 python/diagnose_model.py
+# 或指定模型
+./tank/bin/python3 python/diagnose_model.py --model saved_models/latest_model.pth
 ```
 
-**修复方案** (2025-12-03更新):
+**批量checkpoint诊断**:
+```bash
+./tank/bin/python3 python/find_best_checkpoint.py
+```
 
-**【激进修复配置】** - 已应用到 `python/config.py`
+**健康指标**:
+- ✅ Q值标准差 > 1.0
+- ✅ Q值范围在 -50 ~ +100
+- ✅ 不同场景选择不同动作
+- ✅ 评估胜率持续上升
 
+---
+
+#### 修复方案
+
+**方案A：调整奖励函数和配置（已应用）**
+
+代码已修复为以下配置：
+
+**1. 降低存活奖励** (`src/ai_interface.c`):
+```c
+reward += 0.005f;  // 原 0.02f，降低75%
+```
+
+**2. 优化网络架构** (`python/config.py`):
 ```python
-# 1. 降低初始难度
-ENV_CONFIG = {
-    'initial_enemies': 1,  # 2 -> 1，让AI先学会基础
-}
-
-# 2. 延长探索期
 MODEL_CONFIG = {
-    'epsilon_decay': 0.9998,   # 0.9995 -> 0.9998，大幅减慢
-    'epsilon_end': 0.2,        # 0.1 -> 0.2，保持20%探索
-    'learning_rate': 0.00005,  # 0.0001 -> 0.00005，更稳定
-    'target_update_freq': 50,  # 100 -> 50，更频繁更新
-}
-
-# 3. 优化训练参数
-TRAINING_CONFIG = {
-    'batch_size': 64,          # 128 -> 64，更频繁更新
-    'buffer_size': 50000,      # 100000 -> 50000
-    'min_buffer_size': 500,    # 1000 -> 500，更早开始
-}
-
-# 4. 禁用干扰因素
-DIFFICULTY_CONFIG = {
-    'enabled': False,  # 暂时禁用动态难度
-}
-
-SELF_PLAY_CONFIG = {
-    'enabled': False,  # 暂时禁用自我对弈
-}
-
-# 5. 增强人类数据利用
-HUMAN_LEARNING_CONFIG = {
-    'min_reward': -30.0,       # -50 -> -30，接受更多数据
-    'sampling_weight': 1.5,    # 1.0 -> 1.5，增加权重
+    'hidden_dims': [256, 256, 128],  # 原 [512, 512, 256, 128]
+    'epsilon_end': 0.15,             # 原 0.01，保持15%探索
+    'learning_rate': 0.0001,         # 原 0.00005
 }
 ```
 
-**预期效果**:
-
-| 阶段 | 回合数 | Epsilon | 敌人数 | 预期胜率 |
-|------|--------|---------|--------|----------|
-| 基础学习 | 0-500 | 0.9-0.7 | 1 | 60-80% |
-| 策略成熟 | 500-2000 | 0.7-0.4 | 1 | 70-85% |
-| 稳定阶段 | 2000-5000 | 0.4-0.2 | 1-2 | 65-80% |
-| 高级训练 | 5000+ | 0.2+ | 2-5 | 50-70% |
-
-**使用建议**:
-
-方案A: 从头重新训练 (强烈推荐)
+**从头重新训练**:
 ```bash
+make clean && make
 make train
 # 选择 [0] 创建新模型
 ```
 
-方案B: 继续训练 (如果想保留已学经验)
+**方案B：测试早期checkpoint**
+
+如果已有训练数据，可能早期模型更好：
 ```bash
-make train
-# 选择 latest_model.pth
+# 批量诊断所有checkpoint
+./tank/bin/python3 python/find_best_checkpoint.py
+
+# 用最佳checkpoint对战
+make run-player
+# 选择诊断工具推荐的checkpoint
 ```
 
-**监控关键指标**:
-- 胜率应稳步上升
-- Epsilon应缓慢下降 (5000回合时仍>0.3)
-- 每500回合检查: `python python/check_progress.py`
+---
 
-**如果还不行**:
+#### 预期效果
 
-1. **进一步降低难度**:
-   ```python
-   ENV_CONFIG['initial_enemies'] = 0  # 只有AI，练习移动
-   ```
+| 指标 | 修复前（崩溃） | 修复后 |
+|------|---------------|--------|
+| Q值标准差 | 0.043 | >1.0 ✅ |
+| Q值范围 | 70.60~70.73 | -10~+30 ✅ |
+| 网络参数 | 45万 | 11万 ✅ |
+| Epsilon终值 | 0.01 | 0.15 ✅ |
+| 评估胜率 | <10% | 40-70% ✅ |
+| 推理行为 | 一直IDLE ❌ | 主动进攻 ✅ |
+| 训练速度 | 基准 | 快2倍 ✅ |
 
-2. **调整奖励函数** (需要修改C代码):
-   ```c
-   // src/ai_interface.c
-   reward += 0.1f;      // 存活奖励: 0.01 -> 0.1
-   reward -= 5.0f;      // 受伤惩罚: -10 -> -5
-   reward += 100.0f;    // 击杀奖励: 50 -> 100
-   ```
-   然后重新编译: `make clean && make`
+---
 
-3. **检查人类数据质量**:
-   ```bash
-   ls -lh human_data/
-   # 如果数据质量差，考虑删除或禁用
-   HUMAN_LEARNING_CONFIG['enabled'] = False
-   ```
+#### 训练监控
 
-**Epsilon衰减对比**:
-
-```
-旧配置 (epsilon_decay=0.9995):
-  500回合: ε≈0.08  -> AI几乎不探索
-  1000回合: ε≈0.007 -> 完全固化
-
-新配置 (epsilon_decay=0.9998):
-  500回合: ε≈0.71  -> 仍在探索
-  1000回合: ε≈0.50 -> 平衡探索/利用
-  5000回合: ε≈0.37 -> 逐渐稳定
-  10000回合: ε≈0.13 -> 最终收敛
+**定期检查**（建议每1000回合）:
+```bash
+./tank/bin/python3 python/diagnose_model.py --model saved_models/latest_model.pth
 ```
 
-**重要提醒**:
-- 给AI足够时间学习，不要频繁调整参数
-- 对抗1个敌人稳定后，再手动增加敌人数量
-- 胜率短期下降是正常的（增加探索的副作用）
-- 关注长期趋势，而非单次训练结果
+**正常训练标志**:
+- Q值标准差持续 > 1.0
+- 评估胜率稳步上升
+- 推理时动作多样化
+- Epsilon缓慢下降（10000回合时仍 >0.3）
+
+**异常立即处理**:
+- Q值标准差 < 0.5 → 停止训练，检查配置
+- 评估胜率不升反降 → 降低epsilon衰减速度
+- 推理时只选IDLE → 已崩溃，需重新训练
+
+---
+
+#### 技术原理
+
+**为什么会训练崩溃？**
+
+1. **Q值过高估计**
+   - 存活奖励累积（0.02/帧 × 60fps = 1.2分/秒）
+   - 网络学会"预测高Q值"
+   - 所有动作Q值都膨胀到+70
+
+2. **Q值坍缩**
+   - 所有动作Q值接近，无法区分优劣
+   - Epsilon降到0.01，停止探索
+   - 固化在错误策略（如IDLE）
+
+3. **奖励函数缺陷**
+   - 存活奖励主导整个训练
+   - 模型学会"不动就能得分"
+   - 缺少动作多样性激励
+
+**修复原理**
+
+1. **降低存活奖励** (0.02→0.005)
+   - 减少Q值膨胀
+   - 让击杀/胜利奖励更重要
+
+2. **减小网络容量** (45万→11万参数)
+   - 避免过拟合
+   - 训练更快更稳定
+
+3. **保持探索** (epsilon_end 0.01→0.15)
+   - 后期仍能探索新策略
+   - 避免固化在局部最优
+
+---
+
+#### 常见问题
+
+**Q: 必须从头训练吗？**
+A: 是的。奖励函数变化后，旧模型的Q值不再适用。
+
+**Q: 训练需要多久？**
+A: 预计5000-10000回合看到明显效果（纯文本模式约3-5小时）。
+
+**Q: 如何判断训练正常？**
+A: 定期运行 `diagnose_model.py`，确保：
+- Q值标准差 > 1.0
+- 评估胜率持续上升
+- 推理时有多样化动作
+
+**Q: 旧的checkpoint还能用吗？**
+A: 用诊断工具测试。如果Q值标准差>0.5，可能还有救。
 
 ## Git 工作流
 
@@ -790,7 +820,7 @@ numpy>=1.21.0
 
 **使用工具:**
 ```bash
-python python/check_progress.py
+python python/diagnose_model.py
 ```
 
 **诊断内容:**
@@ -949,7 +979,7 @@ SELF_PLAY_CONFIG['self_play_prob'] = 0.3
 
 **定期检查（每5000回合）:**
 ```bash
-python python/check_progress.py
+python python/diagnose_model.py
 ```
 
 **正常训练标志:**
@@ -1000,7 +1030,7 @@ make train
 # 4. 等待训练（建议10000回合）
 
 # 5. 定期检查进度
-python python/check_progress.py
+python python/diagnose_model.py
 ```
 
 **进阶优化清单（可选）:**
@@ -1209,7 +1239,7 @@ tensorboard --logdir=./ray_results
 
 ### 配置文件
 
-Ray相关配置在 `python/ray_config.py` 中：
+Ray相关配置在 `python/config.py (RAY_CORE_CONFIG section)` 中：
 
 ```python
 # Ray Core配置
@@ -1286,7 +1316,7 @@ make ray-benchmark
 
 **定期检查进度**：
 ```bash
-python python/check_progress.py
+python python/diagnose_model.py
 ```
 
 ### 最佳实践
@@ -1319,8 +1349,8 @@ python python/check_progress.py
 ### 相关文件
 
 - `python/train_ray.py` - Ray Core训练脚本
-- `python/train_rllib.py` - Ray RLlib训练脚本
-- `python/ray_config.py` - Ray配置管理
+- (已删除，使用 train_ray.py) - Ray RLlib训练脚本
+- `python/config.py (RAY_CORE_CONFIG section)` - Ray配置管理
 - `Makefile` - Ray相关命令（train-ray, train-rllib）
 
 ### 预期收益
@@ -1461,7 +1491,7 @@ RAY_CORE_CONFIG = {
 **Q: AI一直输？**
 - 降低初始敌人数量到1
 - 延长训练时间（至少1000回合）
-- 查看诊断：`python python/check_progress.py`
+- 查看诊断：`python python/diagnose_model.py`
 
 **Q: 想看训练过程？**
 - 使用可视化模式：`make train-vis`
@@ -1470,7 +1500,7 @@ RAY_CORE_CONFIG = {
 **Q: Ray训练报错？**
 - 停止Ray：`ray stop`
 - 检查显存：`nvidia-smi`
-- 减少worker数：编辑`python/ray_config.py`中的`num_workers`
+- 减少worker数：编辑`python/config.py (RAY_CORE_CONFIG section)`中的`num_workers`
 
 ## 多人联机对战
 
