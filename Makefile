@@ -141,6 +141,46 @@ diagnose-human-data:
 		python3 python/diagnose_human_data.py; \
 	fi
 
+# 评估人类数据质量（详细分析）
+eval-human-data:
+	@echo "📊 评估人类数据质量..."
+	@if [ -d "./$(VENV_DIR)" ]; then \
+		./$(VENV_DIR)/bin/python python/evaluate_human_data.py; \
+	else \
+		python3 python/evaluate_human_data.py; \
+	fi
+
+# 清理低质量人类数据（质量评分<30，模拟运行）
+clean-human-data-dry:
+	@echo "🗑️  模拟清理低质量人类数据（质量评分<30）..."
+	@if [ -d "./$(VENV_DIR)" ]; then \
+		./$(VENV_DIR)/bin/python python/evaluate_human_data.py --clean-threshold 30 --dry-run; \
+	else \
+		python3 python/evaluate_human_data.py --clean-threshold 30 --dry-run; \
+	fi
+
+# 清理低质量人类数据（质量评分<30，实际执行）
+clean-human-data:
+	@echo "🗑️  清理低质量人类数据（质量评分<30）..."
+	@echo "⚠️  此操作将移动低质量文件到 human_data/low_quality_backup/"
+	@read -p "确认继续？(y/N) " confirm && [ "$$confirm" = "y" ] || exit 1
+	@if [ -d "./$(VENV_DIR)" ]; then \
+		./$(VENV_DIR)/bin/python python/evaluate_human_data.py --clean-threshold 30; \
+	else \
+		python3 python/evaluate_human_data.py --clean-threshold 30; \
+	fi
+
+# 严格清理人类数据（质量评分<20）
+clean-human-data-strict:
+	@echo "🗑️  严格清理低质量人类数据（质量评分<20）..."
+	@echo "⚠️  此操作将移动低质量文件到 human_data/low_quality_backup/"
+	@read -p "确认继续？(y/N) " confirm && [ "$$confirm" = "y" ] || exit 1
+	@if [ -d "./$(VENV_DIR)" ]; then \
+		./$(VENV_DIR)/bin/python python/evaluate_human_data.py --clean-threshold 20; \
+	else \
+		python3 python/evaluate_human_data.py --clean-threshold 20; \
+	fi
+
 # 安装Ray依赖
 install-ray:
 	@echo "安装Ray Core..."
@@ -173,8 +213,13 @@ help:
 	@echo "  make run-multiplayer-client  - 运行多人对战（客户端）"
 	@echo ""
 	@echo "训练模式:"
-	@echo "  make train            - Ray并行训练（AlphaGo风格分阶段）⚡⚡⚡"
-	@echo "  make diagnose-human-data - 诊断人类数据质量"
+	@echo "  make train            - Ray并行训练（极简模式，3倍慢epsilon衰减）⚡⚡⚡"
+	@echo ""
+	@echo "人类数据管理:"
+	@echo "  make eval-human-data       - 评估人类数据质量（详细分析）"
+	@echo "  make clean-human-data-dry  - 模拟清理低质量数据（质量<30）"
+	@echo "  make clean-human-data      - 清理低质量数据（质量<30，需确认）"
+	@echo "  make clean-human-data-strict - 严格清理数据（质量<20，需确认）"
 	@echo ""
 	@echo "虚拟环境配置:"
 	@echo "  VENV_DIR=tank         - 默认虚拟环境名称"
@@ -187,4 +232,4 @@ help:
 	@echo "  - Ray并行训练提供8个worker并行采样，训练速度提升4-6倍"
 	@echo ""
 
-.PHONY: all clean rebuild install-deps install-python-deps install-ray run-player run-multiplayer-server run-multiplayer-client train help
+.PHONY: all clean rebuild install-deps install-python-deps install-ray run-player run-multiplayer-server run-multiplayer-client train diagnose-human-data eval-human-data clean-human-data-dry clean-human-data clean-human-data-strict help

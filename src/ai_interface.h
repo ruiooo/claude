@@ -160,6 +160,26 @@ void ai_render();
  */
 void ai_cleanup();
 
+/*
+ * 设置假人模式（课程学习用）
+ * @param dummy_mode: 是否启用假人模式
+ *   - 0: 正常模式（敌人会移动和射击）
+ *   - 1: 假人模式（敌人静止不动，不射击，1点血）
+ * 功能：
+ *   - 课程学习阶段1：AI练习射击静止目标
+ *   - 降低训练难度，让AI先学会基础射击
+ * 用途：
+ *   - 训练初期：让AI学习"射击→击杀"的因果关系
+ *   - 避免探索失败：静止目标更容易击中
+ */
+void ai_set_dummy_mode(int dummy_mode);
+
+/*
+ * 获取假人模式状态（内部使用）
+ * @return 当前假人模式状态（0=关闭, 1=开启）
+ */
+int ai_get_dummy_mode();
+
 #ifdef __cplusplus
 }
 #endif

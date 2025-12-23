@@ -386,27 +386,36 @@ class DQNAgent:
 
         return action
 
-    def train(self, batch: Tuple) -> float:
+    def train(self, batch: Tuple, use_prioritized: bool = False):
         """
-        训练网络（DQN算法核心）
+        训练网络（DQN算法核心）- 支持 Double DQN 和优先经验回放
+
+        【算法升级】
+        ✅ Double DQN: 用策略网络选择动作，目标网络评估（减少Q值过估计）
+        ✅ 优先经验回放: 支持重要性采样权重（重要经验优先学习）
 
         DQN训练算法（Q-learning + 深度网络）:
 
         1. 从经验回放缓冲区采样一批数据:
-           (s, a, r, s', done)
+           (s, a, r, s', done) [+ indices, weights (如果使用优先回放)]
 
         2. 计算当前Q值（策略网络）:
            Q_current = policy_net(s)[a]
 
-        3. 计算目标Q值（目标网络）:
-           Q_target = r + γ * max(target_net(s'))  (如果未结束)
-           Q_target = r                             (如果已结束)
+        3. 计算目标Q值（Double DQN改进）:
+           ❌ 标准DQN: Q_target = r + γ * max(target_net(s'))
+           ✅ Double DQN:
+              - 用策略网络选择最佳动作: a* = argmax policy_net(s')
+              - 用目标网络评估该动作: Q_target = r + γ * target_net(s')[a*]
+           原因: 减少Q值过估计（max操作的系统性高估）
 
         4. 计算TD误差（Temporal Difference Error）:
            TD_error = Q_current - Q_target
 
         5. 最小化损失函数:
-           Loss = Huber(Q_current, Q_target)
+           ❌ 标准: Loss = Huber(Q_current, Q_target)
+           ✅ 优先回放: Loss = weights * Huber(Q_current, Q_target)
+           原因: 重要性采样权重补偿优先采样的偏差
 
         6. 反向传播 + 梯度下降更新参数
 
@@ -422,22 +431,39 @@ class DQNAgent:
 
         Args:
             batch: 一批经验数据
+                标准buffer: (states, actions, rewards, next_states, dones)
+                优先buffer: (states, actions, rewards, next_states, dones, indices, weights)
                 - states: [batch_size, 43]
                 - actions: [batch_size]
                 - rewards: [batch_size]
                 - next_states: [batch_size, 43]
                 - dones: [batch_size] (1=结束, 0=未结束)
+                - indices: [batch_size] 采样索引（优先回放用）
+                - weights: [batch_size] 重要性采样权重（优先回放用）
+
+            use_prioritized: 是否使用优先经验回放
+                - False: 标准DQN训练
+                - True: 使用重要性采样权重，返回TD误差
 
         Returns:
-            损失值（标量）
-                - 用于监控训练进度
-                - 正常范围: 0.1-10
-                - 过大(>100): 训练不稳定
-                - 过小(<0.01): 可能过拟合
+            如果 use_prioritized=False:
+                loss (float): 损失值
+            如果 use_prioritized=True:
+                (loss, td_errors): (损失值, TD误差数组)
+                - loss: float，用于监控
+                - td_errors: ndarray，用于更新优先级
         """
-        # 解包批数据
-        # batch是一个元组: (states, actions, rewards, next_states, dones)
-        states, actions, rewards, next_states, dones = batch
+        # ========== 解包批数据 ==========
+
+        if use_prioritized:
+            # 优先经验回放: 包含权重和索引
+            states, actions, rewards, next_states, dones, indices, weights = batch
+            # 转换权重为PyTorch张量
+            weights = torch.FloatTensor(weights).to(self.device)
+        else:
+            # 标准经验回放
+            states, actions, rewards, next_states, dones = batch
+            weights = None  # 不使用权重
 
         # ========== 数据转换: numpy数组 → PyTorch张量 ==========
 
@@ -467,30 +493,59 @@ class DQNAgent:
         # shape: [batch_size, 1]
         current_q_values = q_values.gather(1, actions.unsqueeze(1))
 
-        # ========== 计算目标Q值 ==========
+        # ========== 计算目标Q值（Double DQN）==========
 
         # 目标Q值计算需要用目标网络（不是策略网络）
         # 且不需要梯度（因为目标网络不训练）
         with torch.no_grad():
-            # 1. 用目标网络计算下一状态的Q值
-            # target_net(next_states) shape: [batch_size, 9]
+            # ✅ Double DQN改进: 解耦动作选择和动作评估
+            # 原理: 标准DQN用同一个网络选择和评估，会系统性高估Q值
+            # 改进: 用策略网络选择动作，用目标网络评估该动作
+
+            # 步骤1: 用策略网络选择下一状态的最佳动作
+            # policy_net(next_states): [batch_size, 9]
+            # argmax(1): 沿动作维度找最大Q值的索引
+            # shape: [batch_size]
+            next_actions = self.policy_net(next_states).argmax(1)
+
+            # 步骤2: 用目标网络计算下一状态的Q值
+            # target_net(next_states): [batch_size, 9]
             next_q_values = self.target_net(next_states)
 
-            # 2. 取每个状态的最大Q值
-            # max(1)[0]: 在动作维度（dim=1）取最大值
-            # [0]表示只要最大值，不要索引
-            # shape: [batch_size]
-            max_next_q = next_q_values.max(1)[0]
+            # 步骤3: 提取策略网络选择的动作对应的Q值
+            # gather(1, ...): 沿动作维度收集值
+            # next_actions.unsqueeze(1): [batch_size] → [batch_size, 1]
+            # gather(...).squeeze(): [batch_size, 1] → [batch_size]
+            #
+            # 对比标准DQN:
+            # ❌ 标准DQN: max_next_q = next_q_values.max(1)[0]
+            #    （同一个网络选择和评估，导致过估计）
+            # ✅ Double DQN: max_next_q = next_q_values[next_actions]
+            #    （分离选择和评估，减少过估计）
+            max_next_q = next_q_values.gather(1, next_actions.unsqueeze(1)).squeeze()
 
-            # 3. 贝尔曼方程计算目标Q值:
-            # Q*(s,a) = r + γ * max Q(s', a')  (如果未结束)
-            # Q*(s,a) = r                       (如果已结束)
+            # 步骤4: 贝尔曼方程计算目标Q值
+            # Q*(s,a) = r + γ * Q_target(s', a*_policy)  (如果未结束)
+            # Q*(s,a) = r                                (如果已结束)
             #
             # (1 - dones): 如果done=1则系数为0，否则为1
             # 作用: 结束状态的目标Q值 = 当前奖励（无未来奖励）
             target_q_values = rewards + (1 - dones) * self.gamma * max_next_q
 
-        # ========== 计算损失函数 ==========
+        # ========== 计算TD误差（用于优先经验回放）==========
+
+        # TD误差 = 当前Q值 - 目标Q值
+        # 用途:
+        # 1. 衡量预测误差大小
+        # 2. 优先经验回放: 根据|TD误差|设置优先级
+        # 3. 监控训练进度
+        #
+        # detach(): 从计算图中分离，避免梯度传播
+        # cpu(): 移到CPU（numpy需要）
+        # numpy(): 转为numpy数组
+        td_errors = (current_q_values.squeeze() - target_q_values).detach().cpu().numpy()
+
+        # ========== 计算损失函数（支持优先经验回放）==========
 
         # Huber Loss (Smooth L1 Loss):
         # - |x-y| < 1: loss = 0.5 * (x-y)²    (类似MSE)
@@ -499,10 +554,35 @@ class DQNAgent:
         # 优点:
         # - 对小误差敏感（二次项），收敛快
         # - 对大误差鲁棒（线性项），避免梯度爆炸
-        #
-        # squeeze(): 移除大小为1的维度
-        # current_q_values shape: [batch_size, 1] → [batch_size]
-        loss = F.smooth_l1_loss(current_q_values.squeeze(), target_q_values)
+
+        if weights is not None:
+            # ✅ 优先经验回放: 使用重要性采样权重
+            # reduction='none': 不自动求平均，返回每个样本的损失
+            # shape: [batch_size]
+            element_wise_loss = F.smooth_l1_loss(
+                current_q_values.squeeze(),
+                target_q_values,
+                reduction='none'  # ← 关键：保留每个样本的损失
+            )
+
+            # 应用重要性采样权重
+            # 原理: 高优先级样本被过度采样，需要降低权重
+            #      低优先级样本被欠采样，需要提高权重
+            # weighted_loss shape: [batch_size]
+            weighted_loss = element_wise_loss * weights
+
+            # 对所有样本求平均
+            loss = weighted_loss.mean()
+        else:
+            # ❌ 标准DQN: 均匀权重
+            # reduction='mean': 自动对所有样本求平均
+            # squeeze(): 移除大小为1的维度
+            # current_q_values shape: [batch_size, 1] → [batch_size]
+            loss = F.smooth_l1_loss(
+                current_q_values.squeeze(),
+                target_q_values,
+                reduction='mean'
+            )
 
         # ========== 反向传播和参数更新 ==========
 
@@ -545,9 +625,17 @@ class DQNAgent:
         if self.train_step % self.target_update_freq == 0:
             self.update_target_network()
 
-        # 返回损失值（用于日志和监控）
-        # item(): 将单元素张量转为Python float
-        return loss.item()
+        # ========== 返回结果 ==========
+
+        # 根据是否使用优先经验回放返回不同结果
+        if use_prioritized:
+            # 优先经验回放: 返回 (损失值, TD误差)
+            # TD误差用于更新经验的优先级
+            # item(): 将单元素张量转为Python float
+            return loss.item(), td_errors
+        else:
+            # 标准DQN: 只返回损失值
+            return loss.item()
 
     def update_target_network(self):
         """

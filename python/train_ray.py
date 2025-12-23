@@ -13,12 +13,11 @@ import numpy as np                  # 数值计算库
 import os                           # 操作系统接口，用于路径操作
 from typing import List, Tuple, Dict     # 类型提示，提高代码可读性
 from model import DQNAgent, DQN          # 自定义的DQN智能体类和网络类
-from replay_buffer import ReplayBuffer  # 经验回放缓冲区
+from replay_buffer import ReplayBuffer  # ⚠️ 临时回退：先测试标准回放
 from env_wrapper import TankBattleEnv   # 坦克大战游戏环境包装器
 from human_data_loader import HumanDataLoader  # 人类数据加载器
 from config import TRAINING_CONFIG, MODEL_CONFIG, ENV_CONFIG, PATHS, HUMAN_LEARNING_CONFIG, STAGED_TRAINING_CONFIG, EARLY_STOPPING_CONFIG  # 配置文件
-from training_stages import TrainingStageManager  # AlphaGo风格的分阶段训练管理器
-from early_stopping import EarlyStopping, ConvergenceDetector, TrainingRecommendation  # 早停和收敛监控
+# 删除评估和早停逻辑 - 专注于纯粹训练
 
 @ray.remote  # Ray装饰器：将类标记为远程可执行对象，实例会运行在独立的进程中
 class ParallelEnvWorker:
@@ -168,52 +167,7 @@ class ParallelEnvWorker:
 
         return action
 
-    def evaluate(self, num_episodes: int) -> Tuple[float, float]:
-        """
-        评估当前策略的性能（在远程进程中执行）
-
-        Args:
-            num_episodes: 评估使用的游戏回合数
-
-        Returns:
-            (平均奖励, 胜率) 的元组
-            - 平均奖励: 所有回合的平均总奖励
-            - 胜率: 玩家获胜的回合占比（0-1之间）
-        """
-        total_reward = 0  # 累计总奖励
-        wins = 0          # 累计获胜次数
-
-        # 执行多个评估回合
-        for _ in range(num_episodes):
-            # 重置环境，开始新回合
-            state = self.env.reset(ENV_CONFIG['initial_enemies'])
-            episode_reward = 0  # 当前回合的累计奖励
-            episode_done = False  # 回合结束标志
-
-            # 单回合评估循环
-            while not episode_done:
-                # ✅ 修复4：评估时使用真实网络（贪婪策略，无探索）
-                action = self._select_action_with_network(state)
-
-                # 执行动作
-                next_state, reward, done, info = self.env.step(action)
-
-                # 累计奖励
-                episode_reward += reward
-
-                # 更新状态
-                state = next_state
-                episode_done = done
-
-            # 记录本回合结果
-            total_reward += episode_reward
-
-            # 检查是否获胜（winner == 0 表示玩家获胜）
-            if info.get('winner') == 0:
-                wins += 1
-
-        # 返回平均值
-        return total_reward / num_episodes, wins / num_episodes
+    # evaluate方法已删除 - 不再需要评估
 
 
 def train_with_ray():
@@ -344,11 +298,12 @@ def train_with_ray():
         print(f"ℹ️ 未找到已有模型，从头开始训练\n")
 
     # ========== 步骤4: 创建经验回放缓冲区 ==========
-    # 经验回放是DQN的核心技术，用于打破数据相关性
+    # ⚠️ 临时回退到标准ReplayBuffer，测试是否是优先回放导致的问题
     replay_buffer = ReplayBuffer(
         capacity=TRAINING_CONFIG['buffer_size'],  # 缓冲区最大容量（存储多少条经验）
         state_dim=MODEL_CONFIG['state_dim']       # 状态维度（用于预分配内存）
     )
+    print("⚠️ 使用标准ReplayBuffer（测试模式）")
 
     # ========== 步骤4.5: 加载人类数据（模仿学习）==========
     if HUMAN_LEARNING_CONFIG['enabled']:
@@ -379,47 +334,11 @@ def train_with_ray():
     batch_size = TRAINING_CONFIG['batch_size']      # 每次训练的批次大小
     episodes_per_worker = TRAINING_CONFIG.get('episodes_per_worker', 1)  # 每个worker每轮收集的回合数
 
-    # ========== 步骤5.5: 初始化AlphaGo风格的分阶段训练管理器 ==========
-    stage_manager = None
-    if STAGED_TRAINING_CONFIG['enabled']:
-        # 创建阶段管理器
-        stage_manager = TrainingStageManager(STAGED_TRAINING_CONFIG['stages'])
-
-        # 打印训练阶段规划
-        print(stage_manager.get_all_stages_summary())
-        print()
-
-    # ========== 步骤5.6: 初始化早停和收敛监控 ==========
-    early_stopping = None
-    convergence_detector = None
-
-    if EARLY_STOPPING_CONFIG['enabled']:
-        # 创建早停监控器
-        early_stopping = EarlyStopping(
-            patience=EARLY_STOPPING_CONFIG['patience'],
-            min_delta=EARLY_STOPPING_CONFIG['min_delta'],
-            metric=EARLY_STOPPING_CONFIG['metric'],
-            mode='max',  # 胜率越大越好
-            baseline=EARLY_STOPPING_CONFIG.get('baseline')
-        )
-
-        # 创建收敛检测器
-        convergence_detector = ConvergenceDetector(
-            window_size=EARLY_STOPPING_CONFIG.get('convergence_window', 100),
-            win_rate_threshold=EARLY_STOPPING_CONFIG.get('convergence_win_rate', 0.75),
-            stability_threshold=EARLY_STOPPING_CONFIG.get('convergence_stability', 0.05)
-        )
-
-        min_episodes = EARLY_STOPPING_CONFIG.get('min_episodes', 0)
-        print(f"✅ 早停监控已配置")
-        print(f"   - 最小训练回合: {min_episodes:,} 回合（达到后启用早停）")
-        print(f"   - 容忍次数: {EARLY_STOPPING_CONFIG['patience']} 次评估（{EARLY_STOPPING_CONFIG['patience']*100} 回合）")
-        print(f"   - 最小改进: {EARLY_STOPPING_CONFIG['min_delta']*100:.0f}%")
-        print(f"   - 基线胜率: {EARLY_STOPPING_CONFIG.get('baseline', 0)*100:.0f}%\n")
+    # ========== 阶段训练和早停已删除 ==========
+    # 简化训练流程，专注于核心学习
 
     # 打印训练配置信息
-    training_mode = "AlphaGo风格分阶段" if STAGED_TRAINING_CONFIG['enabled'] else "传统单一阶段"
-    print(f"🚀 开始Ray并行训练（v4.0 - {training_mode}）")
+    print(f"🚀 开始Ray并行训练（v5.0 - 极简模式）")
     print(f"   - 工作器数量: {num_workers}")
     print(f"   - 主设备: {device}")
     print(f"   - Worker设备: CPU")
@@ -447,33 +366,7 @@ def train_with_ray():
         # 持续训练直到达到最大回合数
         while episode_count < max_episodes:
 
-            # ========== AlphaGo风格分阶段训练：更新当前阶段 ==========
-            if stage_manager is not None:
-                stage_changed, stage_info = stage_manager.update(episode_count)
-
-                # 如果阶段切换，打印详细信息并重置epsilon
-                if stage_changed:
-                    if STAGED_TRAINING_CONFIG['verbose']:
-                        stage_manager.print_stage_info(episode_count)
-
-                    # 阶段切换时，重置epsilon为新阶段的起始值
-                    agent.epsilon = stage_info['epsilon']
-                    print(f"   ⚙️  Epsilon已重置为: {agent.epsilon:.3f}")
-
-                # 动态调整人类数据采样权重
-                replay_buffer.human_data_weight = stage_info['human_data_weight']
-
-                # 根据阶段调整epsilon
-                if stage_info['index'] == 0:
-                    # 阶段1：如果启用override，每轮都覆盖epsilon（防止衰减）
-                    if STAGED_TRAINING_CONFIG['override_epsilon_in_stage1']:
-                        agent.epsilon = stage_info['epsilon']
-                else:
-                    # 阶段2/3：使用阶段配置的epsilon（线性插值）
-                    # 这样可以让epsilon按照阶段配置自然增长
-                    agent.epsilon = stage_info['epsilon']
-
-            # ✅ 修复5：每轮采样前，同步网络参数给所有Worker
+            # ✅ 每轮采样前，同步网络参数给所有Worker
             # 这确保Worker使用最新训练的策略进行采样
             policy_state_dict = agent.policy_net.state_dict()
 
@@ -533,13 +426,10 @@ def train_with_ray():
                         total_draws += 1
 
                     # ✅ 按回合数衰减epsilon（每完成一个回合衰减一次）
-                    # 注意：如果启用分阶段训练，epsilon由阶段管理器控制，不使用这里的衰减
-                    # 只在未启用分阶段训练时才使用epsilon_decay
-                    if stage_manager is None:
-                        agent.epsilon = max(
-                            MODEL_CONFIG['epsilon_end'],
-                            agent.epsilon * MODEL_CONFIG['epsilon_decay']
-                        )
+                    agent.epsilon = max(
+                        MODEL_CONFIG['epsilon_end'],
+                        agent.epsilon * MODEL_CONFIG['epsilon_decay']
+                    )
 
                     # 更新回合计数
                     episode_count += 1
@@ -590,42 +480,18 @@ def train_with_ray():
                 train_multiplier = 4  # 每条经验训练4次（增加GPU利用率）
                 num_updates = (len(all_results[0][0]) * num_workers * train_multiplier) // batch_size
 
-                # ✅ 人类数据使用策略
-                # 优先级：分阶段训练 > 周期控制 > 默认启用
-                if stage_manager is not None:
-                    # 启用分阶段训练时，始终开启人类数据，通过权重控制使用量
-                    # 阶段1权重100.0 → 大量使用，阶段4权重1.0 → 少量使用
-                    replay_buffer.include_human_data = True
-                elif HUMAN_LEARNING_CONFIG.get('periodic_usage', False):
-                    # 周期性控制（仅在未启用分阶段训练时生效）
-                    interval = HUMAN_LEARNING_CONFIG.get('usage_interval', 200)
-                    duration = HUMAN_LEARNING_CONFIG.get('usage_duration', 1)
-
-                    cycle_position = episode_count % interval
-                    should_use_human = cycle_position < duration
-
-                    prev_state = getattr(replay_buffer, '_prev_human_state', None)
-                    replay_buffer.include_human_data = should_use_human
-
-                    # 只在状态变化时输出
-                    if prev_state != should_use_human:
-                        status = "✅ 启用人类数据" if should_use_human else "⏸️  仅用AI数据"
-                        print(f"\n[数据源切换] {status} (周期 {cycle_position}/{interval})")
-                        replay_buffer._prev_human_state = should_use_human
-                else:
-                    # 默认：始终使用人类数据
+                # ✅ 始终使用人类数据（如果有的话）
+                if hasattr(replay_buffer, 'include_human_data'):
                     replay_buffer.include_human_data = True
 
                 # 执行多次梯度更新
                 total_loss = 0.0
                 for _ in range(num_updates):
-                    # 从回放缓冲区随机采样一个批次
-                    # 随机采样可以打破数据之间的时间相关性
+                    # ⚠️ 临时回退：使用标准回放（不使用优先级）
                     batch = replay_buffer.sample(batch_size)
 
-                    # 使用采样的批次训练DQN网络
-                    # 返回TD-error损失值
-                    loss = agent.train(batch)
+                    # ✅ 只使用Double DQN（不使用优先回放）
+                    loss = agent.train(batch, use_prioritized=False)
                     total_loss += loss
 
                 # 记录平均损失（用于监控）
@@ -634,110 +500,10 @@ def train_with_ray():
                 # 注意: epsilon衰减已经在每个回合完成时执行（见第463-468行）
                 # 不再需要在这里按采样轮次衰减
 
-            # ==================== 阶段3: 定期评估 ====================
-            # 每100个回合评估一次模型性能，监控训练进度
+            # ==================== 阶段3: 定期保存模型 ====================
+            # 每100个回合保存一次模型（无评估）
 
-            # 检查是否到达评估时机
             if episode_count % 100 == 0 and episode_count > 0:
-                print(f"\n\n📊 评估中...")  # 换行输出评估信息
-
-                # ✅ 先同步最新参数给Worker（确保评估使用最新策略）
-                policy_state_dict = agent.policy_net.state_dict()
-                cpu_state_dict = {k: v.cpu() for k, v in policy_state_dict.items()}
-                update_futures = [
-                    worker.update_network_params.remote(cpu_state_dict)
-                    for worker in workers
-                ]
-                ray.get(update_futures)
-
-                # 向所有worker分发评估任务（并行评估）
-                # 每个worker独立运行5个回合来评估当前策略
-                eval_futures = [
-                    worker.evaluate.remote(5)  # 远程调用evaluate方法，每个worker评估5回合
-                    for worker in workers
-                ]
-
-                # 等待所有worker完成评估，获取结果
-                # results: List[Tuple[float, float]]
-                # 每个元组包含：(平均奖励, 胜率)
-                results = ray.get(eval_futures)
-
-                # 计算所有worker评估结果的平均值
-                # r[0]: 第r个worker的平均奖励
-                avg_reward = np.mean([r[0] for r in results])
-                # r[1]: 第r个worker的胜率
-                win_rate = np.mean([r[1] for r in results])
-
-                # 打印评估结果
-                print(f"回合 {episode_count}: "
-                      f"平均奖励={avg_reward:.2f}, "       # 保留2位小数
-                      f"胜率={win_rate*100:.1f}%")        # 转换为百分比，保留1位小数
-
-                # ========== 早停和收敛检测 ==========
-                if early_stopping is not None and convergence_detector is not None:
-                    # 更新收敛检测器
-                    convergence_detector.update(win_rate, avg_reward, 500)  # 假设平均长度500
-
-                    # 检查是否达到最小训练回合数
-                    min_episodes = EARLY_STOPPING_CONFIG.get('min_episodes', 0)
-
-                    # 只有达到最小回合数后才启用早停检查
-                    if episode_count >= min_episodes:
-                        # 更新早停监控器
-                        should_stop = early_stopping.step(win_rate, episode_count)
-                    else:
-                        # 未达到最小回合数，不启用早停
-                        should_stop = False
-                        if episode_count % 500 == 0:
-                            remaining = min_episodes - episode_count
-                            print(f"\n⏳ 早停尚未启用（需要 {min_episodes:,} 回合，剩余 {remaining:,} 回合）")
-
-                    # 每5次评估（500回合）打印一次状态
-                    if episode_count % 500 == 0:
-                        early_stopping.print_status()
-                        convergence_detector.print_metrics()
-
-                        # 打印训练建议
-                        recommendation = TrainingRecommendation.analyze(
-                            episode_count, win_rate, avg_reward, agent.epsilon,
-                            stage_info if stage_manager else None
-                        )
-                        print(f"\n💡 训练建议: {recommendation['status']}")
-                        for rec in recommendation['recommendations']:
-                            print(f"   {rec}")
-                        print()
-
-                    # 如果应该早停
-                    if should_stop:
-                        print(f"\n{'='*80}")
-                        print(f"⛔ 早停触发！训练已收敛")
-                        print(f"{'='*80}")
-                        print(f"   最佳胜率: {early_stopping.best_value*100:.1f}% (回合 {early_stopping.best_episode})")
-                        print(f"   当前胜率: {win_rate*100:.1f}%")
-                        print(f"   未改进次数: {early_stopping.counter}/{early_stopping.patience}")
-                        print(f"\n   建议: 使用回合 {early_stopping.best_episode} 的模型作为最终模型")
-                        print(f"{'='*80}\n")
-
-                        # 保存最终模型
-                        final_checkpoint = {
-                            'policy_net': agent.policy_net.state_dict(),
-                            'target_net': agent.target_net.state_dict(),
-                            'optimizer': agent.optimizer.state_dict(),
-                            'epsilon': agent.epsilon,
-                            'train_step': agent.train_step,
-                            'episode': episode_count,
-                            'early_stopped': True,
-                            'best_episode': early_stopping.best_episode,
-                            'best_win_rate': early_stopping.best_value,
-                        }
-                        final_path = os.path.join(PATHS['models'], 'final_model.pth')
-                        torch.save(final_checkpoint, final_path)
-                        print(f"✓ 最终模型已保存: {final_path}\n")
-
-                        # 退出训练循环
-                        break
-
-                # ✅ 修复6：保存到标准路径（与玩家模式一致）
                 # 构造包含回合数的checkpoint
                 checkpoint = {
                     'policy_net': agent.policy_net.state_dict(),
