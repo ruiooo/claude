@@ -120,10 +120,10 @@ class TankBattleEnv:
 
         # ========== 状态空间和动作空间配置 ==========
 
-        # 状态空间维度: 43维（固定）
+        # 状态空间维度: 47维（v2.0升级版）
         # 这个值必须与C代码的状态生成函数匹配
-        # 组成: 6维AI + 25维敌人(5×5) + 12维子弹(3×4)
-        self.state_dim = 43
+        # 组成: 6维AI + 25维敌人(5×5) + 12维子弹(3×4) + 4维战略信息
+        self.state_dim = 47
 
         # 动作空间维度: 9个动作
         # 0: 静止, 1-4: 移动, 5-8: 射击
@@ -228,6 +228,44 @@ class TankBattleEnv:
         # 作用: 释放SDL资源，关闭窗口
         self.lib.ai_cleanup.argtypes = []
         self.lib.ai_cleanup.restype = None
+
+        # ========== ai_set_difficulty: 设置敌人难度 ==========
+
+        # C函数原型: void ai_set_difficulty(int level);
+        # 参数:
+        # - level: 难度级别 (0-3)
+        #   0 = 假人模式（静止靶，不移动不射击）
+        #   1 = 简单模式（随机移动，偶尔射击）
+        #   2 = 中等模式（追踪移动，简单射击，不躲避）
+        #   3 = 困难模式（完整AI：预判射击+躲避+定位）
+        self.lib.ai_set_difficulty.argtypes = [ctypes.c_int]
+        self.lib.ai_set_difficulty.restype = None
+
+        # ========== ai_get_difficulty: 获取当前难度 ==========
+        self.lib.ai_get_difficulty.argtypes = []
+        self.lib.ai_get_difficulty.restype = ctypes.c_int
+
+    def set_difficulty(self, level: int):
+        """
+        设置敌人AI难度级别（课程学习核心）
+
+        难度说明:
+        - 0: 假人模式 - 敌人静止不动，不射击（练习射击）
+        - 1: 简单模式 - 敌人随机移动，偶尔射击（练习追踪）
+        - 2: 中等模式 - 敌人追踪AI，简单射击（练习躲避）
+        - 3: 困难模式 - 完整AI，预判射击+躲避（最终挑战）
+
+        建议训练流程:
+        1. 难度0训练2000回合（学会射击）
+        2. 难度1训练5000回合（学会追踪和射击）
+        3. 难度2训练10000回合（学会躲避和战术）
+        4. 难度3训练10000+回合（精炼策略）
+        """
+        self.lib.ai_set_difficulty(level)
+
+    def get_difficulty(self) -> int:
+        """获取当前难度级别"""
+        return self.lib.ai_get_difficulty()
 
     def reset(self, enemy_count: int = 2) -> np.ndarray:
         """

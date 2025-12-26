@@ -19,6 +19,7 @@
 
 #include "game.h"
 #include "enemy_ai.h"
+#include "ai_interface.h"  // 获取难度级别
 #include <math.h>
 #include <stdlib.h>
 
@@ -28,11 +29,12 @@ static bool will_hit_wall(Tank* tank, Direction dir, int map_width, int map_heig
 // ========== AI参数配置 ==========
 
 // ✅ 玩家对战模式优化：提升AI智商
-#define ACTION_INTERVAL 3      // 每3帧更新一次决策（反应更快）
-#define IDEAL_MIN_DIST 100.0f  // 理想最小距离（更激进，敢于近战）
-#define IDEAL_MAX_DIST 180.0f  // 理想最大距离（更短，保持压迫感）
+#define ACTION_INTERVAL 2      // 每2帧更新一次决策（更快反应）
+#define IDEAL_MIN_DIST 100.0f  // 理想最小距离（激进近战）
+#define IDEAL_MAX_DIST 180.0f  // 理想最大距离（保持压迫感）
 #define DANGER_DIST 100.0f     // 子弹危险距离阈值（更早躲避）
-#define SHOOT_RANGE 300.0f     // 射击范围（更远距离也会射击）
+#define SHOOT_RANGE 300.0f     // 射击范围（远距离射击）
+// 注意：BULLET_SPEED已在bullet.h中定义为5.0f
 
 // 初始化敌人AI
 void enemy_ai_init(EnemyAI* ai, Tank* target) {
@@ -146,28 +148,23 @@ static bool detect_danger_bullet(Tank* enemy_tank, Bullet* bullets, int bullet_c
 }
 
 /*
- * 尝试射击目标（智能射击判定）
+ * 尝试射击目标（智能射击判定 v2.0 - 带预判）
+ *
+ * 【核心升级】增加预判射击功能
+ * 1. 基础射击：目标静止时直接对齐射击
+ * 2. 预判射击：目标移动时预测其位置，提前射击
  *
  * 射击算法设计：
  * 1. 检查射击条件（目标存活、冷却完成）
- * 2. 计算到目标的距离，判断是否在理想射程（150-350）
- * 3. 检查是否在射击线上（水平或垂直对齐，容忍度40）
- * 4. 如果满足条件，调整坦克方向并返回true
+ * 2. 计算预测位置（根据目标速度）
+ * 3. 判断是否在理想射程（100-300）
+ * 4. 检查是否在射击线上（水平或垂直对齐）
+ * 5. 如果满足条件，调整坦克方向并返回true
  *
- * 为什么需要容忍度？
- * - 完美对齐（dx=0或dy=0）几乎不可能
- * - 40像素容忍度允许"差不多对准"时就射击
- * - 避免AI反复微调方向（抖动）
- *
- * 为什么只在方向不对时才转向？
- * - 减少不必要的转向动作
- * - 如果已经朝着正确方向，直接射击
- * - 提高AI响应速度
- *
- * 射程设计：
- * - 最小距离150：太近容易被反击
- * - 最大距离350：太远命中率低
- * - 理想距离200左右：平衡安全和命中率
+ * 预判射击原理：
+ * - 子弹飞行时间 = 距离 / 子弹速度
+ * - 预测位置 = 当前位置 + 速度 × 飞行时间
+ * - 这样可以命中移动中的目标
  *
  * @return true=可以射击并已调整方向, false=不满足射击条件
  */
@@ -177,40 +174,73 @@ bool enemy_ai_try_shoot(EnemyAI* ai, Tank* enemy_tank, Tank* target) {
     if (!tank_can_shoot(enemy_tank)) return false;    // 射击冷却中
 
     // 计算到目标的相对位置
-    float dx = target->x - enemy_tank->x;  // x方向距离（正=目标在右，负=在左）
-    float dy = target->y - enemy_tank->y;  // y方向距离（正=目标在下，负=在上）
-    float dist = sqrtf(dx * dx + dy * dy); // 直线距离
+    float dx = target->x - enemy_tank->x;
+    float dy = target->y - enemy_tank->y;
+    float dist = sqrtf(dx * dx + dy * dy);
 
-    // ✅ 优化射程判定：更激进，射程更远
-    if (dist >= IDEAL_MIN_DIST && dist <= SHOOT_RANGE) {
-        // ✅ 增加对齐容忍度：允许60像素的偏差（更容易射击）
-        float tolerance = 60.0f;
+    // 射程检查
+    if (dist < IDEAL_MIN_DIST || dist > SHOOT_RANGE) {
+        return false;
+    }
 
-        // 情况1：水平对齐（上下偏差小，可以左右射击）
-        if (fabs(dy) < tolerance && fabs(dx) > 30.0f) {
-            // 确定应该朝哪个方向射击
-            Direction desired_dir = (dx > 0) ? DIR_RIGHT : DIR_LEFT;
+    // ========== 预判射击计算 ==========
+    // 计算子弹飞行时间（帧数）
+    float bullet_travel_time = dist / BULLET_SPEED;
 
-            // 只有在当前方向不对时才转向（避免重复转向）
-            if (enemy_tank->direction != desired_dir) {
-                enemy_tank->direction = desired_dir;
-            }
-            return true;  // 可以射击
+    // 预测目标位置（考虑目标移动）
+    float predicted_dx = dx + target->vx * bullet_travel_time;
+    float predicted_dy = dy + target->vy * bullet_travel_time;
+
+    // 根据目标是否移动选择使用哪个位置
+    bool target_moving = (fabsf(target->vx) > 0.1f || fabsf(target->vy) > 0.1f);
+
+    // 预判因子：移动目标使用预测位置，静止目标使用当前位置
+    float aim_dx = target_moving ? (dx * 0.3f + predicted_dx * 0.7f) : dx;
+    float aim_dy = target_moving ? (dy * 0.3f + predicted_dy * 0.7f) : dy;
+
+    // ========== 射击判定 ==========
+    // 动态容忍度：距离越近要求越精确，距离越远容忍度越大
+    float base_tolerance = 50.0f;
+    float tolerance = base_tolerance + (dist / 10.0f);  // 最大约80像素
+    if (tolerance > 80.0f) tolerance = 80.0f;
+
+    // 情况1：水平对齐（可以左右射击）
+    if (fabsf(aim_dy) < tolerance && fabsf(aim_dx) > 30.0f) {
+        Direction desired_dir = (aim_dx > 0) ? DIR_RIGHT : DIR_LEFT;
+
+        if (enemy_tank->direction != desired_dir) {
+            enemy_tank->direction = desired_dir;
         }
-        // 情况2：垂直对齐（左右偏差小，可以上下射击）
-        else if (fabs(dx) < tolerance && fabs(dy) > 30.0f) {
-            // 确定应该朝哪个方向射击
-            Direction desired_dir = (dy > 0) ? DIR_DOWN : DIR_UP;
+        return true;
+    }
+    // 情况2：垂直对齐（可以上下射击）
+    else if (fabsf(aim_dx) < tolerance && fabsf(aim_dy) > 30.0f) {
+        Direction desired_dir = (aim_dy > 0) ? DIR_DOWN : DIR_UP;
 
-            // 只有在当前方向不对时才转向
-            if (enemy_tank->direction != desired_dir) {
-                enemy_tank->direction = desired_dir;
-            }
-            return true;  // 可以射击
+        if (enemy_tank->direction != desired_dir) {
+            enemy_tank->direction = desired_dir;
+        }
+        return true;
+    }
+
+    // ========== 主动对齐射击 ==========
+    // 如果距离合适但未对齐，尝试主动调整方向射击
+    if (dist < 200.0f && dist > 80.0f) {
+        // 选择偏差较小的轴进行射击
+        if (fabsf(aim_dx) < fabsf(aim_dy) && fabsf(aim_dx) < tolerance * 1.5f) {
+            // x偏差小，尝试垂直射击
+            Direction desired_dir = (aim_dy > 0) ? DIR_DOWN : DIR_UP;
+            enemy_tank->direction = desired_dir;
+            return true;
+        } else if (fabsf(aim_dy) < fabsf(aim_dx) && fabsf(aim_dy) < tolerance * 1.5f) {
+            // y偏差小，尝试水平射击
+            Direction desired_dir = (aim_dx > 0) ? DIR_RIGHT : DIR_LEFT;
+            enemy_tank->direction = desired_dir;
+            return true;
         }
     }
 
-    return false;  // 不满足射击条件（距离不合适或未对齐）
+    return false;
 }
 
 /*
@@ -422,6 +452,80 @@ TankAction enemy_ai_update(EnemyAI* ai, Tank* enemy_tank, Tank* tanks,
     // 优先级0：死亡检测
     if (!enemy_tank->alive) return ACTION_IDLE;
 
+    // ========== 课程学习：根据难度级别调整行为 ==========
+    int difficulty = ai_get_difficulty();
+
+    // ========== 5级难度系统（更平滑的课程学习 v6.3）==========
+    //
+    // 难度0：假人模式 - 静止不动，1点血量（一击必杀）
+    // 难度1：慢移动 - 缓慢随机移动，不射击，1点血量
+    // 难度2：正常移动 - 正常速度移动，不射击，2点血量
+    // 难度3：移动+射击 - 随机移动+偶尔射击，3点血量
+    // 难度4：完整AI - 预判射击+躲避+定位（最终挑战）
+
+    // 难度0-2：降低敌人血量，让AI更容易获得击杀奖励
+    if (difficulty <= 2 && enemy_tank->health > 1) {
+        // 难度0-1：强制1点血量（一击必杀）
+        if (difficulty <= 1) {
+            enemy_tank->health = 1;
+        }
+        // 难度2：最多2点血量
+        else if (difficulty == 2 && enemy_tank->health > 2) {
+            enemy_tank->health = 2;
+        }
+    }
+
+    // 难度0：假人模式 - 静止不动
+    if (difficulty == 0) {
+        return ACTION_IDLE;
+    }
+
+    // 难度1：慢移动 - 只移动不射击（过渡难度）
+    if (difficulty == 1) {
+        // 每20帧决策一次（非常慢，更容易追踪）
+        if (current_frame - ai->last_action_time < 20) {
+            return ACTION_IDLE;
+        }
+        ai->last_action_time = current_frame;
+
+        // 只随机移动，不射击
+        int move_dir = rand() % 4;
+        return ACTION_MOVE_UP + move_dir;
+    }
+
+    // 难度2：正常移动 - 正常速度移动，不射击
+    if (difficulty == 2) {
+        // 每10帧决策一次
+        if (current_frame - ai->last_action_time < 10) {
+            return ACTION_IDLE;
+        }
+        ai->last_action_time = current_frame;
+
+        // 只移动，不射击
+        int move_dir = rand() % 4;
+        return ACTION_MOVE_UP + move_dir;
+    }
+
+    // 难度3：移动+射击 - 随机移动，偶尔射击
+    if (difficulty == 3) {
+        // 每8帧决策一次
+        if (current_frame - ai->last_action_time < 8) {
+            return ACTION_IDLE;
+        }
+        ai->last_action_time = current_frame;
+
+        // 15%概率射击，85%概率随机移动
+        if (rand() % 100 < 15) {
+            int shoot_dir = rand() % 4;
+            return ACTION_SHOOT_UP + shoot_dir;
+        } else {
+            int move_dir = rand() % 4;
+            return ACTION_MOVE_UP + move_dir;
+        }
+    }
+
+    // 难度4+：完整AI - 继续执行下面的完整AI逻辑
+
     // 防卡机制：检测是否长时间移动距离过小
     if (is_stuck(ai, enemy_tank)) {
         // 选择一个不会撞墙的随机方向，强制打破卡住状态
@@ -490,40 +594,64 @@ TankAction enemy_ai_update(EnemyAI* ai, Tank* enemy_tank, Tank* tanks,
 
     // ========== 决策树开始 ==========
 
-    // 优先级1：检测并躲避危险子弹（生存优先）
-    Direction dodge_direction;
-    if (detect_danger_bullet(enemy_tank, bullets, bullet_count, &dodge_direction,
-                            map_width, map_height)) {
-        // 检测到危险！立即进入躲避状态
-        ai->dodge_dir = dodge_direction;      // 记录躲避方向
-        ai->dodge_cooldown = 10;              // 设置躲避持续时间（10帧）
-        ai->last_move_dir = dodge_direction;  // 更新上次移动方向
+    // 优先级1：检测并躲避危险子弹（仅困难模式）
+    if (difficulty >= 3) {
+        Direction dodge_direction;
+        if (detect_danger_bullet(enemy_tank, bullets, bullet_count, &dodge_direction,
+                                map_width, map_height)) {
+            // 检测到危险！立即进入躲避状态
+            ai->dodge_dir = dodge_direction;      // 记录躲避方向
+            ai->dodge_cooldown = 10;              // 设置躲避持续时间（10帧）
+            ai->last_move_dir = dodge_direction;  // 更新上次移动方向
 
-        // 立即执行躲避动作
-        switch (dodge_direction) {
-            case DIR_UP: return ACTION_MOVE_UP;
-            case DIR_DOWN: return ACTION_MOVE_DOWN;
-            case DIR_LEFT: return ACTION_MOVE_LEFT;
-            case DIR_RIGHT: return ACTION_MOVE_RIGHT;
+            // 立即执行躲避动作
+            switch (dodge_direction) {
+                case DIR_UP: return ACTION_MOVE_UP;
+                case DIR_DOWN: return ACTION_MOVE_DOWN;
+                case DIR_LEFT: return ACTION_MOVE_LEFT;
+                case DIR_RIGHT: return ACTION_MOVE_RIGHT;
+            }
         }
     }
 
-    // 优先级2：尝试射击（攻击优先，但不优先于生存）
-    if (enemy_ai_try_shoot(ai, enemy_tank, ai->target)) {
-        // 满足射击条件（距离合适且对齐），执行射击
-        switch (enemy_tank->direction) {
-            case DIR_UP: return ACTION_SHOOT_UP;
-            case DIR_DOWN: return ACTION_SHOOT_DOWN;
-            case DIR_LEFT: return ACTION_SHOOT_LEFT;
-            case DIR_RIGHT: return ACTION_SHOOT_RIGHT;
+    // 优先级2：尝试射击
+    // 困难模式(3)：预判射击  中等模式(2)：简单射击
+    if (difficulty >= 3) {
+        // 困难模式：使用预判射击
+        if (enemy_ai_try_shoot(ai, enemy_tank, ai->target)) {
+            switch (enemy_tank->direction) {
+                case DIR_UP: return ACTION_SHOOT_UP;
+                case DIR_DOWN: return ACTION_SHOOT_DOWN;
+                case DIR_LEFT: return ACTION_SHOOT_LEFT;
+                case DIR_RIGHT: return ACTION_SHOOT_RIGHT;
+            }
+        }
+    } else if (difficulty == 2) {
+        // 中等模式：简单射击（对准就射，不预判）
+        float dx = ai->target->x - enemy_tank->x;
+        float dy = ai->target->y - enemy_tank->y;
+        float dist = sqrtf(dx*dx + dy*dy);
+
+        // 在射程内且冷却完成
+        if (dist < SHOOT_RANGE && enemy_tank->shoot_cooldown == 0) {
+            // 简单对齐检查（不预判）
+            if (fabsf(dx) < 40.0f) {
+                // 垂直对齐，上下射击
+                if (dy > 0) return ACTION_SHOOT_DOWN;
+                else return ACTION_SHOOT_UP;
+            } else if (fabsf(dy) < 40.0f) {
+                // 水平对齐，左右射击
+                if (dx > 0) return ACTION_SHOOT_RIGHT;
+                else return ACTION_SHOOT_LEFT;
+            }
         }
     }
 
-    // 优先级3：战术定位（保持理想战斗距离）
+    // 优先级3：战术定位（追踪目标）
+    // 中等和困难模式都使用定位，但困难模式更精确
     Direction best_dir = get_positioning_direction(enemy_tank, ai->target, map_width, map_height);
-    ai->last_move_dir = best_dir;  // 记录这次的移动方向
+    ai->last_move_dir = best_dir;
 
-    // 执行定位移动
     switch (best_dir) {
         case DIR_UP: return ACTION_MOVE_UP;
         case DIR_DOWN: return ACTION_MOVE_DOWN;
@@ -531,7 +659,6 @@ TankAction enemy_ai_update(EnemyAI* ai, Tank* enemy_tank, Tank* tanks,
         case DIR_RIGHT: return ACTION_MOVE_RIGHT;
     }
 
-    // 兜底：理论上不应该到这里
     return ACTION_IDLE;
 }
 

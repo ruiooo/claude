@@ -23,13 +23,15 @@ human_data_loader.py - 加载人类对战经验数据（模仿学习）
 - 学习人类高级技巧
 
 【数据格式】
-二进制文件结构:
+二进制文件结构（v2 - 47维）:
     int32: count (经验数量)
-    float32[count][43]: states (状态数组)
+    float32[count][47]: states (状态数组)
     int32[count]: actions (动作数组)
     float32[count]: rewards (奖励数组)
-    float32[count][43]: next_states (下一状态数组)
+    float32[count][47]: next_states (下一状态数组)
     int32[count]: dones (完成标志数组)
+
+旧格式（v1 - 43维）会自动升级到47维。
 
 【经典应用】
 - AlphaGo: 从人类棋谱预训练
@@ -85,113 +87,104 @@ class HumanDataLoader:
         # exist_ok=True: 目录存在时不报错
         os.makedirs(data_dir, exist_ok=True)
 
-    def load_file(self, filepath: str) -> Optional[Tuple[np.ndarray, ...]]:
+    def load_file(self, filepath: str, target_dim: int = 47) -> Optional[Tuple[np.ndarray, ...]]:
         """
-        加载单个数据文件
+        加载单个数据文件（支持自动升级旧格式）
 
         文件格式（二进制）:
         1. int32: count (经验数量)
-        2. float32[count][43]: states
+        2. float32[count][dim]: states (dim=43或47)
         3. int32[count]: actions
         4. float32[count]: rewards
-        5. float32[count][43]: next_states
+        5. float32[count][dim]: next_states
         6. int32[count]: dones
 
-        读取流程:
-        1. 打开二进制文件
-        2. 读取count（经验数量）
-        3. 按顺序读取各数组
-        4. 转换为numpy数组
-        5. 返回元组
+        自动升级:
+        - 检测到43维数据时自动升级到47维
+        - 新增的4维填充默认值（0.2, 0.5, 0.5, 0.5）
 
         Args:
             filepath: 数据文件路径
-                - 例: 'human_data/experience_20231201_120530.dat'
-                - 必须是完整路径
+            target_dim: 目标状态维度（默认47）
 
         Returns:
             tuple: (states, actions, rewards, next_states, dones)
                 或 None (如果加载失败)
-
-        示例:
-            data = loader.load_file('human_data/experience_001.dat')
-            if data:
-                states, actions, rewards, next_states, dones = data
         """
         try:
-            # ========== 打开二进制文件 ==========
-
-            # 以只读二进制模式打开
-            # 'rb': read binary (读取二进制)
             with open(filepath, 'rb') as f:
-
-                # ========== 读取经验数量 ==========
-
-                # 读取前4个字节（int32大小）
-                # f.read(4): 读取4字节
+                # 读取经验数量
                 count_bytes = f.read(4)
-
-                # 检查是否读取成功
-                # 文件太小或损坏时可能读不到4字节
                 if len(count_bytes) < 4:
                     return None
 
-                # 解包为整数
-                # struct.unpack: 将字节序列解析为Python类型
-                # 'i': int32类型
-                # [0]: 取第一个元素（unpack返回元组）
                 count = struct.unpack('i', count_bytes)[0]
 
-                # ========== 安全检查 ==========
-
-                # 检查数量是否合理
-                # count <= 0: 无效数据
-                # count > 100000: 可能是文件损坏（异常大）
                 if count <= 0 or count > 100000:
                     print(f"⚠ 无效的数据量: {count} (文件: {filepath})")
                     return None
 
-                # ========== 读取数据数组 ==========
+                # ========== 自动检测维度 ==========
+                # 计算文件剩余大小来推断状态维度
+                current_pos = f.tell()
+                f.seek(0, 2)  # 移到文件末尾
+                file_size = f.tell()
+                f.seek(current_pos)  # 回到原位置
 
-                # 读取states数组
-                # count * 43 * 4: 总字节数
-                # - count: 经验数量
-                # - 43: 状态维度
-                # - 4: float32字节数
-                # np.frombuffer: 从字节缓冲区创建数组
-                # dtype=float32: 指定数据类型
-                # reshape: 重塑为二维数组 [count, 43]
-                states = np.frombuffer(f.read(count * 43 * 4), dtype=np.float32).reshape(count, 43)
+                remaining_size = file_size - 4  # 减去count的4字节
+                # 预期大小 = states + actions + rewards + next_states + dones
+                # = count*dim*4 + count*4 + count*4 + count*dim*4 + count*4
+                # = count * (2*dim*4 + 12)
 
-                # 读取actions数组
-                # count * 4: int32数组字节数
-                # dtype=int32: 整数类型
-                # shape: [count]
+                # 尝试检测维度
+                expected_size_47 = count * (2 * 47 * 4 + 12)
+                expected_size_43 = count * (2 * 43 * 4 + 12)
+
+                if remaining_size == expected_size_47:
+                    source_dim = 47
+                elif remaining_size == expected_size_43:
+                    source_dim = 43
+                else:
+                    # 尝试43维作为默认
+                    source_dim = 43
+                    print(f"⚠ 文件大小不匹配，尝试43维格式: {filepath}")
+
+                # ========== 读取数据 ==========
+                states = np.frombuffer(f.read(count * source_dim * 4), dtype=np.float32).reshape(count, source_dim)
                 actions = np.frombuffer(f.read(count * 4), dtype=np.int32)
-
-                # 读取rewards数组
-                # count * 4: float32数组字节数
-                # dtype=float32: 浮点类型
-                # shape: [count]
                 rewards = np.frombuffer(f.read(count * 4), dtype=np.float32)
-
-                # 读取next_states数组
-                # 与states相同的格式
-                # shape: [count, 43]
-                next_states = np.frombuffer(f.read(count * 43 * 4), dtype=np.float32).reshape(count, 43)
-
-                # 读取dones数组
-                # count * 4: int32数组字节数
-                # astype(float32): 转换为float（方便GPU计算）
-                # shape: [count]
+                next_states = np.frombuffer(f.read(count * source_dim * 4), dtype=np.float32).reshape(count, source_dim)
                 dones = np.frombuffer(f.read(count * 4), dtype=np.int32).astype(np.float32)
 
-                # 返回所有数据（元组形式）
+                # ========== 自动升级到目标维度 ==========
+                if source_dim < target_dim:
+                    # 需要升级：添加新的维度
+                    extra_dims = target_dim - source_dim  # 通常是4
+
+                    # 新增的4维默认值：
+                    # [43] 存活敌人数：0.2（假设2个敌人/10）
+                    # [44] 最近敌人距离：0.5（中等距离）
+                    # [45] 水平墙距：0.5（居中）
+                    # [46] 垂直墙距：0.5（居中）
+                    default_values = np.array([0.2, 0.5, 0.5, 0.5], dtype=np.float32)
+
+                    # 扩展states
+                    states_extended = np.zeros((count, target_dim), dtype=np.float32)
+                    states_extended[:, :source_dim] = states
+                    states_extended[:, source_dim:] = default_values[:extra_dims]
+                    states = states_extended
+
+                    # 扩展next_states
+                    next_states_extended = np.zeros((count, target_dim), dtype=np.float32)
+                    next_states_extended[:, :source_dim] = next_states
+                    next_states_extended[:, source_dim:] = default_values[:extra_dims]
+                    next_states = next_states_extended
+
+                    print(f"  ↳ 升级 {source_dim}→{target_dim}维")
+
                 return states, actions, rewards, next_states, dones
 
         except Exception as e:
-            # 捕获所有异常（文件不存在、权限问题、格式错误等）
-            # 打印警告但不中断程序
             print(f"⚠ 加载文件失败 {filepath}: {e}")
             return None
 

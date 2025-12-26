@@ -140,7 +140,7 @@ void ai_get_stats(int* ai_health, int* enemy_count, int* frame_count);
  *   - 人类数据记录时计算奖励（确保一致性）
  */
 float calculate_reward(GameState* game, Tank* ai_tank, int prev_health,
-                       int prev_enemies);
+                       int prev_enemies, int action);
 
 /*
  * 渲染当前帧（仅可视化模式）
@@ -179,6 +179,22 @@ void ai_set_dummy_mode(int dummy_mode);
  * @return 当前假人模式状态（0=关闭, 1=开启）
  */
 int ai_get_dummy_mode();
+
+/*
+ * 设置敌人AI难度级别（课程学习核心）
+ * @param level: 难度级别 (0-4)
+ *   0 = 假人模式（静止靶，不移动不射击）
+ *   1 = 慢移动模式（缓慢随机移动，不射击）
+ *   2 = 移动+射击（随机移动，20%概率射击）
+ *   3 = 追踪模式（追踪AI，简单射击，不躲避）
+ *   4 = 完整AI（预判射击+躲避+定位）
+ */
+void ai_set_difficulty(int level);
+
+/*
+ * 获取当前难度级别
+ */
+int ai_get_difficulty();
 
 #ifdef __cplusplus
 }

@@ -123,22 +123,22 @@ run-multiplayer-client: $(MULTIPLAYER_EXEC)
 	@echo "请输入服务器IP地址，然后运行："
 	@echo "  ./$(MULTIPLAYER_EXEC) client <服务器IP>"
 
-# 运行训练（使用Ray并行训练，AlphaGo风格分阶段）⚡⚡⚡
+# 运行训练（使用Ray并行训练）⚡⚡⚡
 train:
-	@echo "🚀 启动Ray并行训练（AlphaGo风格分阶段）..."
+	@echo "🚀 启动Ray并行训练..."
 	@if [ -d "./$(VENV_DIR)" ]; then \
 		./$(VENV_DIR)/bin/python python/train_ray.py; \
 	else \
 		python3 python/train_ray.py; \
 	fi
 
-# 诊断人类数据质量
-diagnose-human-data:
-	@echo "🔍 诊断人类数据质量..."
+# 轨迹回放模式（可视化还原训练过程中的对战）
+demo:
+	@echo "📹 启动轨迹回放模式..."
 	@if [ -d "./$(VENV_DIR)" ]; then \
-		./$(VENV_DIR)/bin/python python/diagnose_human_data.py; \
+		./$(VENV_DIR)/bin/python python/train_ray.py --demo; \
 	else \
-		python3 python/diagnose_human_data.py; \
+		python3 python/train_ray.py --demo; \
 	fi
 
 # 评估人类数据质量（详细分析）
@@ -212,8 +212,9 @@ help:
 	@echo "  make run-multiplayer-server  - 运行多人对战（服务器）"
 	@echo "  make run-multiplayer-client  - 运行多人对战（客户端）"
 	@echo ""
-	@echo "训练模式:"
-	@echo "  make train            - Ray并行训练（极简模式，3倍慢epsilon衰减）⚡⚡⚡"
+	@echo "训练与回放:"
+	@echo "  make train            - Ray并行训练（课程学习，高性能）⚡⚡⚡"
+	@echo "  make demo             - 轨迹回放（可视化还原训练过程）📹"
 	@echo ""
 	@echo "人类数据管理:"
 	@echo "  make eval-human-data       - 评估人类数据质量（详细分析）"
@@ -232,4 +233,4 @@ help:
 	@echo "  - Ray并行训练提供8个worker并行采样，训练速度提升4-6倍"
 	@echo ""
 
-.PHONY: all clean rebuild install-deps install-python-deps install-ray run-player run-multiplayer-server run-multiplayer-client train diagnose-human-data eval-human-data clean-human-data-dry clean-human-data clean-human-data-strict help
+.PHONY: all clean rebuild install-deps install-python-deps install-ray run-player run-multiplayer-server run-multiplayer-client train demo eval-human-data clean-human-data-dry clean-human-data clean-human-data-strict help

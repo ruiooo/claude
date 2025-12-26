@@ -17,10 +17,11 @@
  * - 自动保存为二进制文件(.dat格式)
  * - 用于训练时的模仿学习（见human_data_loader.py）
  *
- * 状态表示（43维，与训练时完全一致）:
+ * 状态表示（47维，与训练时完全一致）:
  * - 玩家坦克: 6维 (x, y, vx, vy, health, shoot_cooldown)
  * - 最近5个敌人: 25维 (每个5维: x, y, vx, vy, health)
  * - 最近3个子弹: 12维 (每个4维: x, y, vx, vy)
+ * - 战略信息: 4维 (存活敌人数, 最近敌人距离, 水平墙距, 垂直墙距)
  *
  * 动作空间（9维）:
  * - 0: 静止, 1-4: 移动(上下左右), 5-8: 射击(上下左右)
@@ -36,6 +37,7 @@
 #include <stdbool.h>
 #include <time.h>
 #include <string.h>
+#include <math.h>
 #include <sys/stat.h>
 #include <sys/types.h>
 #include "game.h"
@@ -89,8 +91,8 @@ typedef struct {
  *
  * 存储格式:
  * - 二进制文件(.dat)
- * - 结构: [count(int32)] [states(float[count][43])] [actions(int32[count])]
- *         [rewards(float[count])] [next_states(float[count][43])] [dones(int32[count])]
+ * - 结构: [count(int32)] [states(float[count][47])] [actions(int32[count])]
+ *         [rewards(float[count])] [next_states(float[count][47])] [dones(int32[count])]
  *
  * 使用流程:
  * 1. recorder_init(): 初始化并分配内存
@@ -100,10 +102,10 @@ typedef struct {
  * 5. recorder_cleanup(): 释放内存
  */
 typedef struct {
-    float (*states)[43];        // 状态数组(每个状态43维)
+    float (*states)[47];        // 状态数组(每个状态47维)
     int* actions;               // 动作数组(每个动作是0-8的整数)
     float* rewards;             // 奖励数组
-    float (*next_states)[43];   // 下一状态数组(每个状态43维)
+    float (*next_states)[47];   // 下一状态数组(每个状态47维)
     int* dones;                 // 结束标志数组(0=继续, 1=回合结束)
     int count;                  // 当前记录数(单回合)
     int capacity;               // 容量上限(防止内存溢出)
@@ -129,10 +131,10 @@ bool recorder_init(ExperienceRecorder* recorder, int capacity, bool enabled) {
     }
 
     // 分配内存
-    recorder->states = (float(*)[43])malloc(sizeof(float[43]) * capacity);
+    recorder->states = (float(*)[47])malloc(sizeof(float[47]) * capacity);
     recorder->actions = (int*)malloc(sizeof(int) * capacity);
     recorder->rewards = (float*)malloc(sizeof(float) * capacity);
-    recorder->next_states = (float(*)[43])malloc(sizeof(float[43]) * capacity);
+    recorder->next_states = (float(*)[47])malloc(sizeof(float[47]) * capacity);
     recorder->dones = (int*)malloc(sizeof(int) * capacity);
 
     if (!recorder->states || !recorder->actions || !recorder->rewards ||
@@ -179,10 +181,10 @@ bool recorder_add(ExperienceRecorder* recorder,
         return false;
     }
 
-    memcpy(recorder->states[recorder->count], state, 43 * sizeof(float));
+    memcpy(recorder->states[recorder->count], state, 47 * sizeof(float));
     recorder->actions[recorder->count] = action;
     recorder->rewards[recorder->count] = reward;
-    memcpy(recorder->next_states[recorder->count], next_state, 43 * sizeof(float));
+    memcpy(recorder->next_states[recorder->count], next_state, 47 * sizeof(float));
     recorder->dones[recorder->count] = done;
 
     recorder->count++;
@@ -205,10 +207,10 @@ bool recorder_save(ExperienceRecorder* recorder) {
 
     // 写入数据
     fwrite(&recorder->count, sizeof(int), 1, fp);
-    fwrite(recorder->states, sizeof(float), recorder->count * 43, fp);
+    fwrite(recorder->states, sizeof(float), recorder->count * 47, fp);
     fwrite(recorder->actions, sizeof(int), recorder->count, fp);
     fwrite(recorder->rewards, sizeof(float), recorder->count, fp);
-    fwrite(recorder->next_states, sizeof(float), recorder->count * 43, fp);
+    fwrite(recorder->next_states, sizeof(float), recorder->count * 47, fp);
     fwrite(recorder->dones, sizeof(int), recorder->count, fp);
 
     fclose(fp);
@@ -241,7 +243,7 @@ void recorder_reset(ExperienceRecorder* recorder) {
 // 前向声明
 void recorder_cleanup(ExperienceRecorder* recorder);
 
-// 将游戏状态转换为观察向量（43维，与训练时一致）
+// 将游戏状态转换为观察向量（47维，与训练时一致）
 static void game_state_to_observation_for_recording(const GameState* game, int tank_id,
                                                      float* obs) {
     int idx = 0;
@@ -350,17 +352,46 @@ static void game_state_to_observation_for_recording(const GameState* game, int t
         }
     }
 
-    // 总共应该是 6 + 25 + 12 = 43 维
+    // ========== 第4部分：战略信息 (4维) ==========
+
+    // [43] 存活敌人数量（归一化到0-1，假设最多10个敌人）
+    obs[idx++] = (float)enemy_count / 10.0f;
+
+    // [44] 最近敌人距离（归一化，使用之前计算的enemies数组）
+    float min_enemy_dist = 9999.0f;
+    if (enemy_count > 0) {
+        min_enemy_dist = sqrtf(enemies[0].dist);  // enemies[0]是最近的
+    }
+    float normalized_min_dist = (min_enemy_dist < 9999.0f) ?
+                                 min_enemy_dist / 800.0f : 1.0f;
+    if (normalized_min_dist > 1.0f) normalized_min_dist = 1.0f;
+    obs[idx++] = normalized_min_dist;
+
+    // [45] 水平墙壁距离（距离左右边界最近的距离）
+    float dist_to_left = player_tank->x;
+    float dist_to_right = game->map_width - player_tank->x;
+    float min_horizontal_wall = (dist_to_left < dist_to_right) ?
+                                 dist_to_left : dist_to_right;
+    obs[idx++] = min_horizontal_wall / game->map_width;
+
+    // [46] 垂直墙壁距离（距离上下边界最近的距离）
+    float dist_to_top = player_tank->y;
+    float dist_to_bottom = game->map_height - player_tank->y;
+    float min_vertical_wall = (dist_to_top < dist_to_bottom) ?
+                               dist_to_top : dist_to_bottom;
+    obs[idx++] = min_vertical_wall / game->map_height;
+
+    // 总共应该是 6 + 25 + 12 + 4 = 47 维
 }
 
 // 计算玩家奖励（使用完整的奖励塑形系统）
 // 注意：此函数现在已弃用，直接使用 ai_interface.c 中的 calculate_reward()
-float calculate_player_reward(GameState* game, int player_id, int prev_health, int prev_enemies) {
+float calculate_player_reward(GameState* game, int player_id, int prev_health, int prev_enemies, int action) {
     Tank* player = &game->tanks[player_id];
 
     // 调用AI训练使用的完整奖励函数
     // 这确保人类数据和AI训练使用完全一致的奖励信号
-    return calculate_reward(game, player, prev_health, prev_enemies);
+    return calculate_reward(game, player, prev_health, prev_enemies, action);
 }
 
 // 处理玩家输入并返回动作
@@ -635,12 +666,12 @@ int main(int argc, char* argv[]) {
             }
 
             // 记录当前状态（如果启用了记录）
-            float current_state[43] = {0};
+            float current_state[47] = {0};
             TankAction player_action = ACTION_IDLE;
             bool should_record = false;
 
             if (recorder.enabled && player_tank) {
-                // 捕获当前状态（与训练时一致的43维）
+                // 捕获当前状态（与训练时一致的47维）
                 game_state_to_observation_for_recording(&game, player_id, current_state);
                 should_record = true;
             }
@@ -669,6 +700,8 @@ int main(int argc, char* argv[]) {
             // AI坦克控制
             static bool ai_debug_shown = false;
             static int action_count = 0;  // 调试：统计动作次数
+            static int consecutive_idle[32] = {0};  // 连续IDLE计数（每个坦克）
+
             for (int i = 0; i < game.tank_count; i++) {
                 if (!game.tanks[i].alive) continue;
 
@@ -686,7 +719,35 @@ int main(int argc, char* argv[]) {
                             action_count++;
                         }
 
-                        // ✅ 修复：ACTION_IDLE也应该执行（可能用于观察/等待）
+                        // ✅ 修复：检测连续IDLE并强制行动
+                        if (action == ACTION_IDLE) {
+                            consecutive_idle[i]++;
+                            // 连续5帧IDLE后，强制向玩家方向移动
+                            if (consecutive_idle[i] >= 5) {
+                                // 找到玩家坦克
+                                Tank* player = NULL;
+                                for (int j = 0; j < game.tank_count; j++) {
+                                    if (game.tanks[j].type == TANK_TYPE_PLAYER && game.tanks[j].alive) {
+                                        player = &game.tanks[j];
+                                        break;
+                                    }
+                                }
+                                if (player) {
+                                    float dx = player->x - game.tanks[i].x;
+                                    float dy = player->y - game.tanks[i].y;
+                                    // 选择主要移动方向
+                                    if (fabsf(dx) > fabsf(dy)) {
+                                        action = (dx > 0) ? ACTION_MOVE_RIGHT : ACTION_MOVE_LEFT;
+                                    } else {
+                                        action = (dy > 0) ? ACTION_MOVE_DOWN : ACTION_MOVE_UP;
+                                    }
+                                }
+                                consecutive_idle[i] = 0;  // 重置计数
+                            }
+                        } else {
+                            consecutive_idle[i] = 0;  // 有动作时重置
+                        }
+
                         game_execute_action(&game, i, action);
                     } else {
                         // ⚠️ 模型未初始化
@@ -711,11 +772,11 @@ int main(int argc, char* argv[]) {
 
             // 记录经验（如果启用了记录且有动作）
             if (should_record && player_action != ACTION_IDLE && player_tank && player_tank->alive) {
-                float next_state[43] = {0};
+                float next_state[47] = {0};
                 game_state_to_observation_for_recording(&game, player_id, next_state);
 
                 // 使用完整的奖励函数（与AI训练一致）
-                float reward = calculate_player_reward(&game, player_id, prev_health, prev_enemies);
+                float reward = calculate_player_reward(&game, player_id, prev_health, prev_enemies, player_action);
                 int done = game.game_over ? 1 : 0;
 
                 recorder_add(&recorder, current_state, player_action, reward, next_state, done);
