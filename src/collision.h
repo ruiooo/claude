@@ -67,14 +67,18 @@ bool check_bullet_tank_collision(Bullet* bullet, Tank* tank);
  * @param tank_count: 坦克数量
  * @param bullets: 子弹数组指针
  * @param bullet_count: 子弹数量（通常为MAX_BULLETS）
+ * @param map_width: 地图宽度（用于边界检查）
+ * @param map_height: 地图高度（用于边界检查）
  * 功能：
  *   - 遍历所有激活的子弹
  *   - 检测每个子弹与所有存活坦克的碰撞
  *   - 发生碰撞时：
  *     * 坦克受伤（tank_take_damage）
  *     * 销毁子弹（bullet->active=false）
+ *   - 坦克碰撞后进行边界限制，防止被推进墙里
  * 性能：O(n*m)，n=坦克数，m=激活子弹数
  */
-void handle_collisions(Tank* tanks, int tank_count, Bullet* bullets, int bullet_count);
+void handle_collisions(Tank* tanks, int tank_count, Bullet* bullets, int bullet_count,
+                       int map_width, int map_height);
 
 #endif // COLLISION_H

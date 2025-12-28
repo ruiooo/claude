@@ -25,12 +25,19 @@ bool g_visualize = false;
 static int g_difficulty_level = 3;  // 默认困难
 
 // 初始化游戏环境
-void ai_init_env(int width, int height, int visualize) {
+void ai_init_env(int width, int height, int visualize, int disable_vsync) {
     game_init(&g_game, width, height, visualize ? MODE_TRAINING_VIS : MODE_TRAINING);
 
     g_visualize = visualize;
     if (g_visualize) {
-        renderer_init(&g_renderer, width, height, "Tank Battle AI Training");
+        // 根据disable_vsync参数选择渲染器初始化方式
+        if (disable_vsync) {
+            // 回放模式：禁用VSYNC，支持任意帧率
+            renderer_init_no_vsync(&g_renderer, width, height, "Tank Battle AI Replay", disable_vsync);
+        } else {
+            // 训练/对战模式：启用VSYNC，稳定60fps
+            renderer_init(&g_renderer, width, height, "Tank Battle AI Training");
+        }
     }
 }
 
@@ -363,4 +370,36 @@ void ai_set_difficulty(int level) {
 
 int ai_get_difficulty() {
     return g_difficulty_level;
+}
+
+// 设置随机种子（用于轨迹回放）
+void ai_set_seed(unsigned int seed) {
+    srand(seed);
+}
+
+// 检测SDL按键事件（用于轨迹回放控制）
+int ai_poll_key() {
+    if (!g_visualize) {
+        return 0;  // 非可视化模式不检测按键
+    }
+
+    SDL_Event event;
+    while (SDL_PollEvent(&event)) {
+        if (event.type == SDL_QUIT) {
+            return -1;  // 窗口关闭
+        }
+        if (event.type == SDL_KEYDOWN) {
+            switch (event.key.keysym.sym) {
+                case SDLK_SPACE:
+                    return 32;  // 空格键
+                case SDLK_ESCAPE:
+                    return 27;  // ESC键
+                case SDLK_q:
+                    return 113; // Q键
+                default:
+                    break;
+            }
+        }
+    }
+    return 0;  // 无按键
 }

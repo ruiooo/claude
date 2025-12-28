@@ -135,7 +135,8 @@ bool check_bullet_tank_collision(Bullet* bullet, Tank* tank) {
  *   - 子弹碰撞后立即失效，避免穿透
  *   - 坦克碰撞使用物理分离算法
  */
-void handle_collisions(Tank* tanks, int tank_count, Bullet* bullets, int bullet_count) {
+void handle_collisions(Tank* tanks, int tank_count, Bullet* bullets, int bullet_count,
+                       int map_width, int map_height) {
     // ========== 处理子弹-坦克碰撞 ==========
     // 遍历所有活跃子弹
     for (int i = 0; i < bullet_count; i++) {
@@ -187,6 +188,27 @@ void handle_collisions(Tank* tanks, int tank_count, Bullet* bullets, int bullet_
                     tanks[i].y -= ny * separation * 0.5f;
                     tanks[j].x += nx * separation * 0.5f;
                     tanks[j].y += ny * separation * 0.5f;
+
+                    // ========== 边界限制：防止坦克被推进墙里 ==========
+                    // 坦克 i 边界检查
+                    if (tanks[i].x < 0) tanks[i].x = 0;
+                    if (tanks[i].y < 0) tanks[i].y = 0;
+                    if (tanks[i].x + tanks[i].width > map_width) {
+                        tanks[i].x = map_width - tanks[i].width;
+                    }
+                    if (tanks[i].y + tanks[i].height > map_height) {
+                        tanks[i].y = map_height - tanks[i].height;
+                    }
+
+                    // 坦克 j 边界检查
+                    if (tanks[j].x < 0) tanks[j].x = 0;
+                    if (tanks[j].y < 0) tanks[j].y = 0;
+                    if (tanks[j].x + tanks[j].width > map_width) {
+                        tanks[j].x = map_width - tanks[j].width;
+                    }
+                    if (tanks[j].y + tanks[j].height > map_height) {
+                        tanks[j].y = map_height - tanks[j].height;
+                    }
                 }
             }
         }

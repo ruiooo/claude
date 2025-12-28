@@ -197,6 +197,22 @@ class ReplayBuffer:
             # 人类数据
             buffer.push(..., source=1)
         """
+        # ========== 防御性检查（调试段错误） ==========
+        # 确保 state 是有效的 numpy 数组
+        if state is None:
+            raise ValueError("push(): state is None")
+        if not isinstance(state, np.ndarray):
+            state = np.asarray(state, dtype=np.float32)
+        if state.shape != (self.state_dim,):
+            raise ValueError(f"push(): state shape mismatch: expected ({self.state_dim},), got {state.shape}")
+
+        if next_state is None:
+            raise ValueError("push(): next_state is None")
+        if not isinstance(next_state, np.ndarray):
+            next_state = np.asarray(next_state, dtype=np.float32)
+        if next_state.shape != (self.state_dim,):
+            raise ValueError(f"push(): next_state shape mismatch: expected ({self.state_dim},), got {next_state.shape}")
+
         # 获取当前写入位置（简化逻辑，移除永久保留）
         # 优化：允许覆盖人类数据，通过高采样权重保证利用率
         idx = self.position

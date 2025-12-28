@@ -198,6 +198,75 @@ MODEL_CONFIG = {
 }
 
 # ============================================================
+# GPU性能配置预设 - 根据显卡自动优化训练参数
+# ============================================================
+GPU_PRESETS = {
+    # 入门级GPU配置 (GTX 1660, RTX 2060, RTX 3050等)
+    # 显存: 6-8GB, 算力: 中等
+    'entry': {
+        'batch_size': 256,
+        'num_workers': 8,
+        'buffer_size': 35000,
+        'train_multiplier': 4,
+        'train_iterations': 100,    # 每轮固定训练100次
+        'hidden_dims': [256, 256, 128],  # 标准网络（11万参数）
+        'description': '入门级GPU (6-8GB显存)',
+        'expected_gpu_util': '40-60%',
+    },
+
+    # 中端GPU配置 (RTX 3060, RTX 3070, RTX 4060等)
+    # 显存: 8-12GB, 算力: 良好
+    'mid': {
+        'batch_size': 512,
+        'num_workers': 16,
+        'buffer_size': 50000,
+        'train_multiplier': 8,
+        'train_iterations': 200,    # 每轮固定训练200次
+        'hidden_dims': [384, 384, 256, 128],  # 中等网络（约40万参数）
+        'description': '中端GPU (8-12GB显存)',
+        'expected_gpu_util': '60-80%',
+    },
+
+    # 高端GPU配置 (RTX 3080, RTX 3090, RTX 4070 Ti等)
+    # 显存: 12-24GB, 算力: 优秀
+    'high': {
+        'batch_size': 1024,
+        'num_workers': 24,
+        'buffer_size': 100000,
+        'train_multiplier': 16,
+        'train_iterations': 300,    # 每轮固定训练300次
+        'hidden_dims': [512, 512, 256, 128],  # 较大网络（约70万参数）
+        'description': '高端GPU (12-24GB显存)',
+        'expected_gpu_util': '70-90%',
+    },
+
+    # 旗舰级GPU配置 (RTX 4090, RTX 5090, A100等)
+    # 显存: 24GB+, 算力: 极强
+    'flagship': {
+        'batch_size': 4096,         # 增大到4096（更大批次）
+        'num_workers': 32,
+        'buffer_size': 200000,
+        'train_multiplier': 64,     # 增加到64x（更多训练）
+        'train_iterations': 500,    # 固定每轮训练500次（不依赖采样量）
+        'hidden_dims': [512, 512, 512, 256, 128],  # 更大网络（约100万参数）
+        'description': '旗舰级GPU (24GB+显存)',
+        'expected_gpu_util': '80-95%',
+    },
+
+    # 自定义配置（手动调整）
+    'custom': {
+        'batch_size': 256,
+        'num_workers': 8,
+        'buffer_size': 35000,
+        'train_multiplier': 4,
+        'train_iterations': 100,
+        'hidden_dims': [256, 256, 128],
+        'description': '自定义配置',
+        'expected_gpu_util': '根据配置而定',
+    },
+}
+
+# ============================================================
 # 训练配置: 批次大小、缓冲区、训练轮数等
 # ============================================================
 TRAINING_CONFIG = {
@@ -218,9 +287,11 @@ TRAINING_CONFIG = {
     # - 适中(128-256): 平衡稳定性和泛化
     #
     # 注意: 批次大小受GPU显存限制
-    # - RTX 3060 (12GB): 可以支持512甚至更大
-    # - GTX 1060 (6GB): 256是安全值
-    # - CPU训练: 建议降到64或128
+    # GPU预设配置（使用GPU_PRESETS自动配置）:
+    # - 入门级 (GTX 1660, RTX 3050):   batch_size=256,  workers=8,  util~50%
+    # - 中端级 (RTX 3060, RTX 3070):   batch_size=512,  workers=16, util~70%
+    # - 高端级 (RTX 3080, RTX 4070Ti): batch_size=1024, workers=24, util~85%
+    # - 旗舰级 (RTX 4090, RTX 5090):   batch_size=2048, workers=32, util~90%
     'batch_size': 256,  # ✨ 增大: 128 -> 256 (更大网络需要更大批次)
 
     # ========== ✨ 经验回放缓冲区大小（重要升级）==========
@@ -390,8 +461,8 @@ TRAJECTORY_CONFIG = {
 
     # 保存间隔（每N回合保存一次批次）
     # 每个批次包含10局精选对战:
-    #   - 5局胜利: 3局步数最短（高效击杀）+ 2局步数最长（艰难取胜）
-    #   - 5局失败/平局: 随机选取
+    #   - 2局：最快胜利（步数最短的2局胜利）
+    #   - 8局：随机抽取（不限胜负，展示训练多样性）
     'save_interval': 1000,
 
     # 最多保存多少个批次（每批次约1-5MB）

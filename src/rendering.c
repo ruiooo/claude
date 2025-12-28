@@ -27,12 +27,13 @@
  * 功能：创建SDL窗口、渲染器和字体资源
  *
  * 参数：
- *   r      - 渲染器结构体指针
- *   width  - 窗口宽度（像素）
- *   height - 窗口高度（像素）
- *   title  - 窗口标题
- *   x      - 窗口X坐标（或SDL_WINDOWPOS_CENTERED）
- *   y      - 窗口Y坐标（或SDL_WINDOWPOS_CENTERED）
+ *   r            - 渲染器结构体指针
+ *   width        - 窗口宽度（像素）
+ *   height       - 窗口高度（像素）
+ *   title        - 窗口标题
+ *   x            - 窗口X坐标（或SDL_WINDOWPOS_CENTERED）
+ *   y            - 窗口Y坐标（或SDL_WINDOWPOS_CENTERED）
+ *   disable_vsync - 是否禁用垂直同步（1=禁用，0=启用）
  *
  * 返回值：
  *   true  - 初始化成功
@@ -42,7 +43,7 @@
  *   - 任何步骤失败都会清理已分配的资源
  *   - 使用stderr输出错误信息
  */
-static bool renderer_init_internal(Renderer* r, int width, int height, const char* title, int x, int y) {
+static bool renderer_init_internal(Renderer* r, int width, int height, const char* title, int x, int y, int disable_vsync) {
     // 记录窗口尺寸
     r->width = width;
     r->height = height;
@@ -76,8 +77,13 @@ static bool renderer_init_internal(Renderer* r, int width, int height, const cha
     // ========== 步骤4：创建SDL渲染器 ==========
     // SDL_RENDERER_ACCELERATED：使用GPU加速渲染
     // SDL_RENDERER_PRESENTVSYNC：开启垂直同步（60fps，避免撕裂）
-    r->renderer = SDL_CreateRenderer(r->window, -1,
-                                     SDL_RENDERER_ACCELERATED | SDL_RENDERER_PRESENTVSYNC);
+    //   - 训练/对战模式：启用VSYNC（稳定60fps）
+    //   - 回放模式：禁用VSYNC（支持任意倍速）
+    int renderer_flags = SDL_RENDERER_ACCELERATED;
+    if (!disable_vsync) {
+        renderer_flags |= SDL_RENDERER_PRESENTVSYNC;
+    }
+    r->renderer = SDL_CreateRenderer(r->window, -1, renderer_flags);
     if (!r->renderer) {
         fprintf(stderr, "渲染器创建失败: %s\n", SDL_GetError());
         SDL_DestroyWindow(r->window);
@@ -120,8 +126,32 @@ static bool renderer_init_internal(Renderer* r, int width, int height, const cha
  *   false - 失败
  */
 bool renderer_init(Renderer* r, int width, int height, const char* title) {
-    // 使用SDL_WINDOWPOS_CENTERED让窗口居中
-    return renderer_init_internal(r, width, height, title, SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED);
+    // 使用SDL_WINDOWPOS_CENTERED让窗口居中，默认启用VSYNC
+    return renderer_init_internal(r, width, height, title, SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED, 0);
+}
+
+/**
+ * 初始化渲染器（控制VSYNC）
+ *
+ * 功能：创建窗口并允许控制垂直同步
+ *
+ * 参数：
+ *   r            - 渲染器结构体指针
+ *   width        - 窗口宽度
+ *   height       - 窗口高度
+ *   title        - 窗口标题
+ *   disable_vsync - 是否禁用垂直同步（1=禁用，0=启用）
+ *
+ * 返回值：
+ *   true  - 成功
+ *   false - 失败
+ *
+ * 用途：
+ *   - 回放模式：禁用VSYNC以支持任意倍速播放
+ *   - 训练模式：启用VSYNC以稳定帧率
+ */
+bool renderer_init_no_vsync(Renderer* r, int width, int height, const char* title, int disable_vsync) {
+    return renderer_init_internal(r, width, height, title, SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED, disable_vsync);
 }
 
 /**
@@ -141,7 +171,7 @@ bool renderer_init(Renderer* r, int width, int height, const char* title) {
  *   - 多人对战模式：让两个玩家的窗口并排显示
  */
 bool renderer_init_with_pos(Renderer* r, int width, int height, const char* title, int x, int y) {
-    return renderer_init_internal(r, width, height, title, x, y);
+    return renderer_init_internal(r, width, height, title, x, y, 0);
 }
 
 /**

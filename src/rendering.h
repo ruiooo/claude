@@ -58,6 +58,19 @@ typedef struct {
 bool renderer_init(Renderer* r, int width, int height, const char* title);
 
 /*
+ * 初始化渲染器（控制VSYNC和窗口位置）
+ * @param r: 渲染器结构体指针
+ * @param width: 窗口宽度（像素）
+ * @param height: 窗口高度（像素）
+ * @param title: 窗口标题字符串
+ * @param disable_vsync: 是否禁用垂直同步（1=禁用，0=启用）
+ * @return: true=成功，false=失败
+ * 功能：与renderer_init相同，但允许控制VSYNC
+ * 用途：回放模式下禁用VSYNC以支持任意帧率
+ */
+bool renderer_init_no_vsync(Renderer* r, int width, int height, const char* title, int disable_vsync);
+
+/*
  * 初始化渲染器（指定窗口位置）
  * @param r: 渲染器结构体指针
  * @param width: 窗口宽度（像素）

@@ -20,13 +20,54 @@ import argparse                     # 命令行参数解析
 import time                         # 时间控制（可视化模式帧率）
 import pickle                       # 轨迹数据序列化
 import glob                         # 文件模式匹配
+import subprocess                   # 用于调用nvidia-smi
 from datetime import datetime       # 时间戳
 from typing import List, Tuple, Dict     # 类型提示，提高代码可读性
 from model import DQNAgent, DQN          # 自定义的DQN智能体类和网络类
 from replay_buffer import ReplayBuffer  # ⚠️ 临时回退：先测试标准回放
 from env_wrapper import TankBattleEnv   # 坦克大战游戏环境包装器
 from human_data_loader import HumanDataLoader  # 人类数据加载器
-from config import TRAINING_CONFIG, MODEL_CONFIG, ENV_CONFIG, PATHS, HUMAN_LEARNING_CONFIG, TRAJECTORY_CONFIG  # 配置文件
+from config import TRAINING_CONFIG, MODEL_CONFIG, ENV_CONFIG, PATHS, HUMAN_LEARNING_CONFIG, TRAJECTORY_CONFIG, GPU_PRESETS  # 配置文件
+
+
+# ============================================================
+# GPU利用率监控工具
+# ============================================================
+
+def get_gpu_utilization():
+    """
+    获取GPU利用率和显存使用情况
+
+    Returns:
+        dict: {'utilization': GPU利用率%, 'memory_used': 已用显存GB, 'memory_total': 总显存GB}
+        或 None（如果无法获取）
+    """
+    try:
+        # 使用nvidia-smi查询GPU状态
+        result = subprocess.run(
+            ['nvidia-smi', '--query-gpu=utilization.gpu,memory.used,memory.total',
+             '--format=csv,noheader,nounits'],
+            capture_output=True,
+            text=True,
+            timeout=1
+        )
+
+        if result.returncode == 0:
+            # 解析输出: "利用率, 已用显存MB, 总显存MB"
+            parts = result.stdout.strip().split(',')
+            if len(parts) >= 3:
+                util = int(parts[0].strip())
+                mem_used = float(parts[1].strip()) / 1024  # MB -> GB
+                mem_total = float(parts[2].strip()) / 1024  # MB -> GB
+                return {
+                    'utilization': util,
+                    'memory_used': mem_used,
+                    'memory_total': mem_total
+                }
+    except Exception:
+        pass
+
+    return None
 
 
 # ============================================================
@@ -42,8 +83,8 @@ class TrajectoryBuffer:
     轨迹缓冲区 - 收集训练过程中的轨迹，定期保存精选集合
 
     保存策略：
-    - 5局胜利：3局步数最短（高效击杀）+ 2局步数最长（艰难取胜）
-    - 5局失败/平局：混合保存
+    - 2局最快胜利（步数最短的2局胜利）
+    - 8局随机抽取（不限胜负，展示训练多样性）
     """
 
     def __init__(self, max_buffer_size: int = 500):
@@ -67,32 +108,46 @@ class TrajectoryBuffer:
         """
         选择最佳的10局轨迹
 
+        策略：
+        - 2局：最快胜利（步数最短的2局）
+        - 8局：随机抽取（从所有轨迹中随机选择）
+
         Returns:
-            包含wins和losses的字典
+            包含wins和losses的字典（wins最多2局，剩余为随机）
         """
+        import random
+
         selected_wins = []
-        selected_losses = []
+        selected_random = []
 
-        # 选择5局胜利
-        if len(self.wins) >= 5:
-            # 按步数排序
+        # 1. 选择2局最快胜利（如果有的话）
+        if len(self.wins) >= 2:
+            # 按步数排序，选择最短的2局
             sorted_wins = sorted(self.wins, key=lambda x: x['num_steps'])
-            # 3局步数最短 + 2局步数最长
-            selected_wins = sorted_wins[:3] + sorted_wins[-2:]
+            selected_wins = sorted_wins[:2]
         elif len(self.wins) > 0:
-            selected_wins = self.wins[:5]
+            # 不足2局，全选
+            selected_wins = self.wins[:]
 
-        # 选择5局失败/平局
-        if len(self.losses) >= 5:
-            # 随机选择5局（或按某种策略）
-            import random
-            selected_losses = random.sample(self.losses, 5)
-        elif len(self.losses) > 0:
-            selected_losses = self.losses[:5]
+        # 2. 从所有轨迹中随机选择8局（不包括已选的最快胜利）
+        # 合并所有轨迹（排除已选的2局最快胜利）
+        all_trajectories = []
+
+        # 添加剩余的胜利轨迹（排除已选的2局）
+        if len(self.wins) >= 2:
+            all_trajectories.extend(self.wins[2:])
+
+        # 添加所有失败/平局轨迹
+        all_trajectories.extend(self.losses)
+
+        # 随机选择8局（如果轨迹不足8局，全选）
+        num_random = min(8, len(all_trajectories))
+        if num_random > 0:
+            selected_random = random.sample(all_trajectories, num_random)
 
         return {
-            'wins': selected_wins,
-            'losses': selected_losses,
+            'wins': selected_wins,  # 最快胜利（最多2局）
+            'losses': selected_random,  # 随机抽取（8局或更少）
         }
 
     def clear(self):
@@ -106,7 +161,7 @@ class TrajectoryBuffer:
 
 
 def collect_trajectory_from_result(experiences: list, winner: int, episode: int,
-                                    difficulty: int, epsilon: float) -> dict:
+                                    difficulty: int, epsilon: float, seed: int = None) -> dict:
     """
     从训练结果中构建轨迹（不需要额外采样）
 
@@ -116,6 +171,7 @@ def collect_trajectory_from_result(experiences: list, winner: int, episode: int,
         episode: 回合号
         difficulty: 难度
         epsilon: 探索率
+        seed: 随机种子（用于回放时还原环境初始状态）
 
     Returns:
         轨迹字典
@@ -138,6 +194,7 @@ def collect_trajectory_from_result(experiences: list, winner: int, episode: int,
         'episode': episode,
         'difficulty': difficulty,
         'epsilon': epsilon,
+        'seed': seed,  # 保存随机种子
         'timestamp': datetime.now().isoformat(),
         'steps': steps,
         'winner': winner,
@@ -240,14 +297,19 @@ class ParallelEnvWorker:
     通过Ray框架实现多进程并行，加速数据采样效率
     """
 
-    def __init__(self, worker_id: int):
+    def __init__(self, worker_id: int, hidden_dims: list = None):
         """
         初始化工作器
 
         Args:
             worker_id: 工作器编号，用于调试和日志记录
+            hidden_dims: 神经网络隐藏层维度列表（必须与主进程一致）
         """
         self.worker_id = worker_id  # 保存工作器ID
+
+        # 使用传入的hidden_dims，或默认值
+        if hidden_dims is None:
+            hidden_dims = MODEL_CONFIG['hidden_dims']
 
         # 构建C库文件的绝对路径（libtankbattle.so是游戏引擎的共享库）
         # 在Ray分布式环境中，worker进程可能在不同的工作目录下运行
@@ -275,17 +337,17 @@ class ParallelEnvWorker:
         device = 'cpu'  # Worker在CPU上运行（避免GPU显存竞争）
         self.device = torch.device(device)
 
-        # 创建本地DQN网络（与主进程架构相同）
+        # ✅ 关键修复：使用传入的hidden_dims创建网络（与主进程架构一致）
         self.policy_net = DQN(
             state_dim=MODEL_CONFIG['state_dim'],
             action_dim=MODEL_CONFIG['action_dim'],
-            hidden_dims=MODEL_CONFIG['hidden_dims']
+            hidden_dims=hidden_dims  # 使用传入的hidden_dims
         ).to(self.device)
 
         # 设为评估模式（推理时不需要Dropout）
         self.policy_net.eval()
 
-    def collect_episodes(self, num_episodes: int, epsilon: float) -> List[Tuple[List[Tuple], int]]:
+    def collect_episodes(self, num_episodes: int, epsilon: float) -> List[Tuple[List[Tuple], int, int]]:
         """
         收集多个回合的经验（这个方法会在远程进程中执行）
 
@@ -294,9 +356,10 @@ class ParallelEnvWorker:
             epsilon: ε-greedy策略的探索率（0-1之间，越大越随机）
 
         Returns:
-            回合数据列表: [(episode_experiences, winner), ...]
+            回合数据列表: [(episode_experiences, winner, seed), ...]
                 - episode_experiences: 该回合的经验列表 [(state, action, reward, next_state, done), ...]
                 - winner: 该回合的胜负 (0=AI胜, 1=敌人胜, -1=平局)
+                - seed: 该回合的随机种子（用于轨迹回放）
         """
         episodes_data = []  # 按回合分组的经验数据
 
@@ -304,8 +367,11 @@ class ParallelEnvWorker:
         for _ in range(num_episodes):
             episode_experiences = []  # 本回合的经验列表
 
-            # 重置环境，开始新的一局游戏
-            state = self.env.reset(ENV_CONFIG['initial_enemies'])
+            # 生成随机种子（用于轨迹回放）
+            seed = np.random.randint(0, 2**31 - 1)
+
+            # 重置环境，使用固定种子开始新的一局游戏
+            state = self.env.reset(ENV_CONFIG['initial_enemies'], seed=seed)
             episode_done = False
 
             # 单个回合的主循环，直到游戏结束
@@ -325,9 +391,9 @@ class ParallelEnvWorker:
                 state = next_state
                 episode_done = done
 
-            # 记录本回合的数据（经验列表 + 胜负）
+            # 记录本回合的数据（经验列表 + 胜负 + 种子）
             winner = info.get('winner', -1)
-            episodes_data.append((episode_experiences, winner))
+            episodes_data.append((episode_experiences, winner, seed))
 
         return episodes_data
 
@@ -395,7 +461,106 @@ def train_with_ray():
     4. 循环执行：并行采样 -> 集中训练 -> 定期评估
     """
 
-    # ========== 步骤0: 创建必要的目录 ==========
+    # ========== 步骤0: GPU配置选择 ==========
+    print("\n" + "="*80)
+    print("🎮 GPU性能配置选择")
+    print("="*80)
+
+    # 检测GPU信息
+    if torch.cuda.is_available():
+        gpu_name = torch.cuda.get_device_name(0)
+        gpu_memory = torch.cuda.get_device_properties(0).total_memory / 1024**3
+        print(f"✓ 检测到GPU: {gpu_name}")
+        print(f"✓ 显存容量: {gpu_memory:.1f} GB")
+    else:
+        print("⚠️  未检测到GPU，将使用CPU训练（速度较慢）")
+        gpu_name = "CPU"
+        gpu_memory = 0
+
+    print(f"\n请选择训练配置:")
+    print(f"  [1] 入门级配置 (GTX 1660, RTX 2060, RTX 3050)")
+    print(f"      Batch: 256, Workers: 8, 每轮训练: 100次, 网络: 11万参数")
+    print(f"      预期GPU利用率: 40-60%")
+    print(f"  ")
+    print(f"  [2] 中端级配置 (RTX 3060, RTX 3070, RTX 4060)")
+    print(f"      Batch: 512, Workers: 16, 每轮训练: 200次, 网络: 40万参数")
+    print(f"      预期GPU利用率: 60-80%")
+    print(f"  ")
+    print(f"  [3] 高端级配置 (RTX 3080, RTX 3090, RTX 4070 Ti)")
+    print(f"      Batch: 1024, Workers: 24, 每轮训练: 300次, 网络: 70万参数")
+    print(f"      预期GPU利用率: 70-90%")
+    print(f"  ")
+    print(f"  [4] 旗舰级配置 (RTX 4090, RTX 5090, A100) ⚡⚡⚡ 推荐5090")
+    print(f"      Batch: 4096, Workers: 32, 每轮训练: 500次, 网络: 100万参数")
+    print(f"      每轮处理: 204万样本，GPU密集计算优化")
+    print(f"      预期GPU利用率: 80-95%")
+    print(f"  ")
+    print(f"  [5] 自定义配置")
+    print(f"      手动设置所有参数（批次、网络、训练次数）")
+
+    # 智能推荐
+    if "5090" in gpu_name or "4090" in gpu_name or "A100" in gpu_name:
+        recommended = 4
+        print(f"\n💡 根据您的GPU ({gpu_name})，推荐选择 [4] 旗舰级配置")
+    elif "3090" in gpu_name or "3080" in gpu_name or "4070" in gpu_name or "4080" in gpu_name:
+        recommended = 3
+        print(f"\n💡 根据您的GPU ({gpu_name})，推荐选择 [3] 高端级配置")
+    elif "3060" in gpu_name or "3070" in gpu_name or "4060" in gpu_name:
+        recommended = 2
+        print(f"\n💡 根据您的GPU ({gpu_name})，推荐选择 [2] 中端级配置")
+    else:
+        recommended = 1
+        print(f"\n💡 根据您的GPU ({gpu_name})，推荐选择 [1] 入门级配置")
+
+    choice = input(f"\n请输入选项 [1-5] (默认={recommended}): ").strip()
+    if not choice:
+        choice = str(recommended)
+
+    # 应用配置
+    preset_map = {
+        '1': 'entry',
+        '2': 'mid',
+        '3': 'high',
+        '4': 'flagship',
+        '5': 'custom',
+    }
+
+    preset_key = preset_map.get(choice, 'entry')
+
+    if preset_key == 'custom':
+        print("\n🔧 自定义配置:")
+        batch_size = int(input(f"  批次大小 (默认=256): ") or "256")
+        num_workers = int(input(f"  并行worker数 (默认=8): ") or "8")
+        buffer_size = int(input(f"  经验缓冲区大小 (默认=35000): ") or "35000")
+        train_iterations = int(input(f"  每轮训练次数 (默认=100): ") or "100")
+        print(f"  网络架构 (例如: 256,256,128 或 512,512,256,128):")
+        hidden_str = input(f"    (默认=256,256,128): ").strip() or "256,256,128"
+        hidden_dims = [int(x.strip()) for x in hidden_str.split(',')]
+        gpu_config = {
+            'batch_size': batch_size,
+            'num_workers': num_workers,
+            'buffer_size': buffer_size,
+            'train_multiplier': 4,  # 保留但不使用
+            'train_iterations': train_iterations,
+            'hidden_dims': hidden_dims,
+            'description': '自定义配置',
+            'expected_gpu_util': '根据配置而定',
+        }
+    else:
+        gpu_config = GPU_PRESETS[preset_key]
+
+    print(f"\n✅ 已选择: {gpu_config['description']}")
+    print(f"   - 批次大小: {gpu_config['batch_size']}")
+    print(f"   - 并行Worker: {gpu_config['num_workers']}")
+    print(f"   - 经验缓冲区: {gpu_config['buffer_size']:,}")
+    print(f"   - 每轮训练次数: {gpu_config.get('train_iterations', 100)}次")
+    print(f"   - 每轮处理样本: {gpu_config['batch_size'] * gpu_config.get('train_iterations', 100):,}个")
+    print(f"   - 网络架构: {' → '.join(map(str, gpu_config.get('hidden_dims', [256, 256, 128])))}")
+    print(f"   - 预期GPU利用率: {gpu_config['expected_gpu_util']}")
+    print(f"\n💡 提示: 每轮训练{gpu_config.get('train_iterations', 100)}次，让GPU持续工作不等待CPU采样")
+    print("="*80 + "\n")
+
+    # ========== 步骤0.5: 创建必要的目录 ==========
     # 确保所有保存路径存在（模型、checkpoint、日志等）
     for path in PATHS.values():
         os.makedirs(path, exist_ok=True)
@@ -406,7 +571,7 @@ def train_with_ray():
         trajectory_buffer = TrajectoryBuffer(max_buffer_size=500)
         print(f"✓ 轨迹缓冲区已创建")
         print(f"   - 保存间隔: 每{TRAJECTORY_CONFIG['save_interval']}回合保存10局精选")
-        print(f"   - 精选策略: 5局胜利(3最短+2最长) + 5局失败/平局")
+        print(f"   - 保存策略: 2局最快胜利 + 8局随机抽取")
 
     # ========== 步骤1: 初始化Ray集群 ==========
     # 检查Ray是否已经初始化（避免重复初始化）
@@ -422,23 +587,28 @@ def train_with_ray():
             ray.init(num_cpus=TRAINING_CONFIG.get('num_workers', 4))
             print("✓ 已启动新的Ray集群")
 
-    # ========== 步骤2: 创建并行环境工作器 ==========
-    # 从配置文件读取工作器数量（默认4个）
-    num_workers = TRAINING_CONFIG.get('num_workers', 4)
+    # ========== 步骤2: 准备网络配置 ==========
+    # ✅ 首先获取网络架构配置（Worker和主进程都需要）
+    ray_model_config = MODEL_CONFIG.copy()
+    ray_model_config['epsilon_start'] = 1.0  # 初始探索率（100%随机）
+    # ✅ 使用GPU配置中的网络架构
+    ray_model_config['hidden_dims'] = gpu_config.get('hidden_dims', MODEL_CONFIG['hidden_dims'])
+
+    # ========== 步骤3: 创建并行环境工作器 ==========
+    # 使用GPU配置中的worker数量
+    num_workers = gpu_config['num_workers']
 
     # 创建多个远程工作器实例
     # .remote(i): Ray的远程调用语法，在独立进程中创建对象
     # 每个worker会在不同的CPU核心上运行，实现并行
-    workers = [ParallelEnvWorker.remote(i) for i in range(num_workers)]
+    # ✅ 关键修复：传递hidden_dims给Worker，确保网络架构一致
+    workers = [ParallelEnvWorker.remote(i, ray_model_config['hidden_dims']) for i in range(num_workers)]
 
-    # ========== 步骤3: 创建主DQN智能体（在主进程中） ==========
+    # ========== 步骤4: 创建主DQN智能体（在主进程中） ==========
     # 创建PyTorch设备对象（CPU或CUDA GPU）
     device = torch.device(TRAINING_CONFIG['device'])
 
     # ✅ Epsilon参数配置
-    # 使用config.py中的配置（不要硬编码！）
-    ray_model_config = MODEL_CONFIG.copy()
-    ray_model_config['epsilon_start'] = 1.0  # 初始探索率（100%随机）
     # epsilon_end 和 epsilon_decay 直接使用 MODEL_CONFIG 中的值
 
     # ✅ 重要：epsilon在每个回合结束后衰减一次（按回合数衰减）
@@ -452,6 +622,21 @@ def train_with_ray():
     #
     # 这确保AI有充足的探索时间，避免过早收敛
     # 每个worker完成一个回合后，epsilon立即衰减一次
+
+    # 计算网络参数量
+    def count_params(hidden_dims, state_dim=47, action_dim=9):
+        total = 0
+        prev = state_dim
+        for h in hidden_dims:
+            total += prev * h + h
+            prev = h
+        total += prev * action_dim + action_dim
+        return total
+
+    param_count = count_params(ray_model_config['hidden_dims'])
+    print(f"\n🧠 神经网络配置:")
+    print(f"   - 架构: {MODEL_CONFIG['state_dim']} → {' → '.join(map(str, ray_model_config['hidden_dims']))} → {MODEL_CONFIG['action_dim']}")
+    print(f"   - 参数量: {param_count:,} ({param_count/1e6:.2f}M)")
 
     # 实例化DQN智能体（包含策略网络和目标网络）
     agent = DQNAgent(
@@ -532,12 +717,12 @@ def train_with_ray():
         print(f"ℹ️ 未找到已有模型，从头开始训练\n")
 
     # ========== 步骤4: 创建经验回放缓冲区 ==========
-    # ⚠️ 临时回退到标准ReplayBuffer，测试是否是优先回放导致的问题
+    # 使用GPU配置中的buffer_size
     replay_buffer = ReplayBuffer(
-        capacity=TRAINING_CONFIG['buffer_size'],  # 缓冲区最大容量（存储多少条经验）
-        state_dim=MODEL_CONFIG['state_dim']       # 状态维度（用于预分配内存）
+        capacity=gpu_config['buffer_size'],  # 缓冲区最大容量（存储多少条经验）
+        state_dim=MODEL_CONFIG['state_dim']   # 状态维度（用于预分配内存）
     )
-    print("⚠️ 使用标准ReplayBuffer（测试模式）")
+    print(f"✓ 经验回放缓冲区已创建 (容量: {gpu_config['buffer_size']:,})")
 
     # ========== 步骤4.5: 加载人类数据（模仿学习）==========
     if HUMAN_LEARNING_CONFIG['enabled']:
@@ -555,7 +740,7 @@ def train_with_ray():
 
             if loaded_count > 0:
                 print(f"✓ 已预加载 {loaded_count:,} 条人类经验")
-                print(f"   - 缓冲区使用率: {len(replay_buffer):,} / {TRAINING_CONFIG['buffer_size']:,} ({len(replay_buffer)/TRAINING_CONFIG['buffer_size']*100:.1f}%)")
+                print(f"   - 缓冲区使用率: {len(replay_buffer):,} / {gpu_config['buffer_size']:,} ({len(replay_buffer)/gpu_config['buffer_size']*100:.1f}%)")
                 print(f"   - AI将从人类专家策略中学习 🎓\n")
             else:
                 print(f"⚠️  未找到人类数据文件\n")
@@ -563,9 +748,10 @@ def train_with_ray():
             print(f"⚠️  加载人类数据失败: {e}\n")
 
     # ========== 步骤5: 准备训练参数 ==========
-    # 从配置文件读取训练超参数
+    # 使用GPU配置中的训练参数
     max_episodes = TRAINING_CONFIG['max_episodes']  # 最大训练回合数
-    batch_size = TRAINING_CONFIG['batch_size']      # 每次训练的批次大小
+    batch_size = gpu_config['batch_size']           # 使用GPU配置中的批次大小
+    train_multiplier = gpu_config['train_multiplier']  # 训练倍数
     episodes_per_worker = TRAINING_CONFIG.get('episodes_per_worker', 1)  # 每个worker每轮收集的回合数
 
     # ========== 步骤5.5: 课程学习配置（5级难度系统 v6.5）==========
@@ -600,20 +786,29 @@ def train_with_ray():
     reward_history = deque(maxlen=HISTORY_WINDOW_SIZE)  # 最近N局的奖励记录（用于p5/p95统计）
 
     # 打印训练配置信息
-    print(f"🚀 开始Ray并行训练（v6.5 - 课程学习+充分训练）")
+    print(f"🚀 开始Ray并行训练（v7.0 - GPU密集训练优化）")
+    print(f"   - GPU配置: {gpu_config['description']}")
+    print(f"   - GPU型号: {torch.cuda.get_device_name(0) if torch.cuda.is_available() else 'N/A'}")
+    if torch.cuda.is_available():
+        print(f"   - GPU显存: {gpu_memory:.1f} GB")
+    print(f"   - 网络参数: {param_count:,} ({param_count/1e6:.2f}M)")
     print(f"   - 工作器数量: {num_workers}")
+    print(f"   - 批次大小: {batch_size}")
+    print(f"   - 每轮训练次数: {gpu_config.get('train_iterations', 100)}次（固定）")
+    print(f"   - 每轮处理样本: {batch_size * gpu_config.get('train_iterations', 100):,}个")
+    print(f"   - 经验缓冲区: {gpu_config['buffer_size']:,}")
+    print(f"   - 预期GPU利用率: {gpu_config['expected_gpu_util']}")
     print(f"   - 主设备: {device}")
     print(f"   - Worker设备: CPU")
     print(f"   - 每轮每工作器收集: {episodes_per_worker} 回合")
-    print(f"   - GPU型号: {torch.cuda.get_device_name(0) if torch.cuda.is_available() else 'N/A'}")
-    print(f"   - 缓冲区初始大小: {len(replay_buffer):,} / {TRAINING_CONFIG['buffer_size']:,} ({len(replay_buffer)/TRAINING_CONFIG['buffer_size']*100:.1f}%)")
+    print(f"   - 缓冲区初始大小: {len(replay_buffer):,} / {gpu_config['buffer_size']:,} ({len(replay_buffer)/gpu_config['buffer_size']*100:.1f}%)")
     if len(replay_buffer) > 0:
         print(f"   🎓 包含人类数据: {len(replay_buffer):,} 条经验（模仿学习）")
     print(f"   ✅ Worker使用训练好的神经网络策略（非随机）")
     print(f"   ✅ 每轮采样前同步最新网络参数")
+    print(f"   ✅ 固定训练次数，GPU持续工作不等待CPU")
     print(f"   ✅ 模型保存到标准路径（玩家模式可用）")
     print(f"   ✅ Epsilon按回合数衰减（decay={MODEL_CONFIG['epsilon_decay']}，每回合衰减一次）")
-    print(f"   ✅ 增强GPU训练频率（每条经验训练4次）")
 
     # 课程学习信息
     if CURRICULUM_CONFIG['enabled']:
@@ -686,12 +881,16 @@ def train_with_ray():
             # 合并所有worker收集的经验到主进程的回放缓冲区
             episode_rewards_this_round = []
             for worker_episodes in all_results:  # 遍历每个worker的结果
-                for episode_experiences, winner in worker_episodes:  # 遍历每个回合
+                for episode_experiences, winner, seed in worker_episodes:  # 遍历每个回合（现在包含seed）
                     # 计算本回合奖励并将经验存入缓冲区
                     episode_reward = 0
                     for exp in episode_experiences:
-                        replay_buffer.push(*exp)
-                        episode_reward += exp[2]  # reward是第3个元素
+                        # 显式转换为numpy数组，防止Ray序列化导致的内存问题
+                        state, action, reward, next_state, done = exp
+                        state = np.asarray(state, dtype=np.float32)
+                        next_state = np.asarray(next_state, dtype=np.float32)
+                        replay_buffer.push(state, action, reward, next_state, done)
+                        episode_reward += reward
 
                     # 记录本回合奖励
                     all_rewards.append(episode_reward)
@@ -702,7 +901,7 @@ def train_with_ray():
                     if trajectory_buffer is not None:
                         trajectory = collect_trajectory_from_result(
                             episode_experiences, winner, episode_count,
-                            current_difficulty, agent.epsilon
+                            current_difficulty, agent.epsilon, seed=seed  # 传递seed
                         )
                         trajectory_buffer.add(trajectory)
                     # 统计胜负
@@ -789,7 +988,7 @@ def train_with_ray():
             difficulty_winrate = (sum(difficulty_history) / len(difficulty_history) * 100) if len(difficulty_history) > 0 else 0
             difficulty_games = len(difficulty_history)
 
-            # 显示训练进度（包含课程学习信息）
+            # 显示训练进度（包含课程学习信息和GPU监控）
             difficulty_name = CURRICULUM_CONFIG['difficulty_names'][current_difficulty] if CURRICULUM_CONFIG['enabled'] else ''
             progress_str = (f"\r回合 {episode_count}/{max_episodes} | "
                   f"难度:{current_difficulty}[{difficulty_name}] | "  # 当前难度
@@ -801,6 +1000,12 @@ def train_with_ray():
             # 显示损失值（如果正在训练）
             if len(replay_buffer) >= TRAINING_CONFIG['min_buffer_size'] and 'avg_loss' in locals():
                 progress_str += f" | Loss: {avg_loss:.4f}"
+
+            # 每100回合显示一次GPU利用率
+            if episode_count % 100 == 0 and torch.cuda.is_available():
+                gpu_stats = get_gpu_utilization()
+                if gpu_stats:
+                    progress_str += f" | GPU: {gpu_stats['utilization']}%({gpu_stats['memory_used']:.1f}GB/{gpu_stats['memory_total']:.1f}GB)"
 
             # 显示数据来源（简洁版）
             if len(replay_buffer) > 0:
@@ -824,18 +1029,16 @@ def train_with_ray():
             # min_buffer_size: 最小缓冲区大小，避免初期数据过少导致训练不稳定
             if len(replay_buffer) >= TRAINING_CONFIG['min_buffer_size']:
 
-                # ✅ 增加训练频率：确保GPU充分利用
-                # 原逻辑：训练次数 = 新收集经验数 / batch_size
-                # 新逻辑：训练次数 = 新收集经验数 * 训练倍数 / batch_size
-                # 训练倍数：每条经验平均训练多少次（提高样本效率）
-                train_multiplier = 4  # 每条经验训练4次（增加GPU利用率）
-                num_updates = (len(all_results[0][0]) * num_workers * train_multiplier) // batch_size
+                # ✅ GPU优化：使用固定训练次数，持续利用GPU
+                # 不再依赖采样量，而是固定每轮训练N次（让GPU持续工作）
+                # 5090配置：每轮训练500次 × batch_size 4096 = 每轮处理204万样本
+                num_updates = gpu_config.get('train_iterations', 100)
 
                 # ✅ 始终使用人类数据（如果有的话）
                 if hasattr(replay_buffer, 'include_human_data'):
                     replay_buffer.include_human_data = True
 
-                # 执行多次梯度更新
+                # 执行多次梯度更新（GPU密集计算）
                 total_loss = 0.0
                 for _ in range(num_updates):
                     # ⚠️ 临时回退：使用标准回放（不使用优先级）
@@ -883,16 +1086,18 @@ def train_with_ray():
             if TRAJECTORY_CONFIG['enabled'] and trajectory_buffer is not None:
                 if episode_count % TRAJECTORY_CONFIG['save_interval'] == 0 and episode_count > 0:
                     # 选择最佳10局轨迹
+                    # - 2局最快胜利（步数最短）
+                    # - 8局随机抽取（不限胜负）
                     best_trajectories = trajectory_buffer.select_best()
-                    win_count = len(best_trajectories['wins'])
-                    loss_count = len(best_trajectories['losses'])
+                    fastest_wins = len(best_trajectories['wins'])  # 最快胜利（最多2局）
+                    random_games = len(best_trajectories['losses'])  # 随机抽取（8局）
 
-                    if win_count + loss_count > 0:
+                    if fastest_wins + random_games > 0:
                         # 保存轨迹批次
                         batch_path = save_trajectory_batch(
                             best_trajectories, episode_count, PATHS['trajectories']
                         )
-                        print(f"📹 轨迹批次已保存: ep{episode_count} [{win_count}胜/{loss_count}负] 缓冲:{trajectory_buffer.stats()}")
+                        print(f"📹 轨迹批次已保存: ep{episode_count} [{fastest_wins}局最快胜利 + {random_games}局随机] 缓冲:{trajectory_buffer.stats()}")
 
                         # 清空缓冲区（开始收集下一批）
                         trajectory_buffer.clear()
@@ -972,9 +1177,9 @@ def replay_trajectory():
     5. 按 q 或 Ctrl+C 退出
 
     存储结构：
-    - 每个批次包含10局精选对战
-    - 5局胜利：3局步数最短 + 2局步数最长
-    - 5局失败/平局
+    - 每1000回合保存一个批次（10局精选对战）
+    - 2局：最快胜利（步数最短的2局胜利）
+    - 8局：随机抽取（不限胜负，展示训练多样性）
     """
 
     # 难度名称映射
@@ -1002,11 +1207,13 @@ def replay_trajectory():
     project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
     lib_path = os.path.join(project_root, 'libtankbattle.so')
 
+    # 回放模式禁用VSYNC，支持任意倍速播放
     env = TankBattleEnv(
         lib_path=lib_path,
         width=ENV_CONFIG['map_width'],
         height=ENV_CONFIG['map_height'],
-        visualize=True
+        visualize=True,
+        disable_vsync=True  # 禁用垂直同步，突破60fps限制
     )
 
     def wait_for_space():
@@ -1016,7 +1223,14 @@ def replay_trajectory():
         return user_input != 'q'
 
     def play_single_trajectory(traj, traj_num, total_num, frame_delay):
-        """播放单个轨迹"""
+        """
+        播放单个轨迹（优化帧率控制）
+
+        Returns:
+            'completed': 正常播放完成
+            'skipped': 用户按空格跳过
+            'quit': 用户按ESC或关闭窗口退出
+        """
         steps = traj['steps']
         result_text = '🏆胜' if traj['winner'] == 0 else ('💀负' if traj['winner'] == 1 else '🤝平')
         diff_name = DIFFICULTY_NAMES[traj['difficulty']] if traj['difficulty'] < len(DIFFICULTY_NAMES) else '?'
@@ -1029,34 +1243,73 @@ def replay_trajectory():
         # 设置难度
         env.set_difficulty(traj['difficulty'])
 
-        try:
-            # 重置环境
-            env.reset(ENV_CONFIG['initial_enemies'])
+        # 重置环境，使用保存的随机种子（确保环境初始状态一致）
+        seed = traj.get('seed', None)
+        if seed is None:
+            print(f"  ⚠️  轨迹未保存种子，环境状态可能不一致")
+        env.reset(ENV_CONFIG['initial_enemies'], seed=seed)
 
-            for i, step in enumerate(steps):
-                env.render()
-                action = step['action']
-                next_state, reward, done, info = env.step(action)
+        # 使用精确的时间戳控制帧率
+        start_time = time.time()
+        actual_steps = 0  # 实际执行的步数
+        skipped = False
 
-                # 每50步显示一次进度
-                if i % 50 == 0:
-                    action_name = ACTION_NAMES[action] if action < len(ACTION_NAMES) else '?'
-                    print(f"  步骤 {i+1:4d}/{len(steps)} | {action_name}")
+        for i, step in enumerate(steps):
+            # 检测SDL按键事件
+            key = env.poll_key()
+            if key == 32:  # 空格键 - 跳过当前局
+                print(f"  ⏭️ 跳过（空格）")
+                skipped = True
+                break
+            elif key == 27 or key == 113 or key == -1:  # ESC/Q键或窗口关闭 - 退出
+                print(f"  ⏹️ 退出")
+                return 'quit'
 
-                time.sleep(frame_delay)
+            # 计算当前帧应该到达的时间
+            target_time = start_time + (i * frame_delay)
 
-                if done:
-                    break
+            env.render()
+            action = step['action']
+            next_state, reward, done, info = env.step(action)
+            actual_steps += 1
 
-            # 显示结果
-            print(f"  ✅ 完成! {result_text} | {len(steps)}步 | 奖励:{traj['total_reward']:.1f}")
-            time.sleep(0.3)
+            # 每50步显示一次进度
+            if i % 50 == 0:
+                action_name = ACTION_NAMES[action] if action < len(ACTION_NAMES) else '?'
+                elapsed = time.time() - start_time
+                real_fps = (i + 1) / elapsed if elapsed > 0 else 0
+                # 显示敌人数量（诊断用）
+                enemy_count = info.get('enemy_count', '?')
+                print(f"  步骤 {i+1:4d}/{len(steps)} | {action_name} | 敌人:{enemy_count} | 帧率:{real_fps:.0f}fps | 空格=跳过")
 
-        except KeyboardInterrupt:
-            print("\n  ⏭️ 跳过")
-            return False
+            # 精确延迟到目标时间
+            current_time = time.time()
+            sleep_time = target_time - current_time
+            if sleep_time > 0:
+                time.sleep(sleep_time)
 
-        return True
+            if done:
+                # 游戏提前结束，显示诊断信息
+                if actual_steps < len(steps):
+                    winner_text = "AI胜" if info.get('winner') == 0 else ("敌人胜" if info.get('winner') == 1 else "平局")
+                    print(f"  ⚠️  游戏在第 {actual_steps}/{len(steps)} 步提前结束 | 结果:{winner_text}")
+                break
+
+        if skipped:
+            return 'skipped'
+
+        # 显示结果和性能统计
+        total_time = time.time() - start_time
+        avg_fps = actual_steps / total_time if total_time > 0 else 0
+
+        # 区分记录步数和实际执行步数
+        steps_info = f"{actual_steps}步"
+        if actual_steps != len(steps):
+            steps_info = f"{actual_steps}/{len(steps)}步（提前结束）"
+
+        print(f"  ✅ 完成! {result_text} | {steps_info} | 奖励:{traj['total_reward']:.1f} | 平均帧率: {avg_fps:.0f} fps")
+
+        return 'completed'
 
     try:
         # ========== 主循环 ==========
@@ -1064,16 +1317,20 @@ def replay_trajectory():
             # 显示批次列表
             print("\n📹 轨迹回放模式 - 批次选择")
             print("=" * 70)
-            print("\n💡 说明：每个批次包含10局精选对战（5胜+5负/平）\n")
+            print("\n💡 说明：每1000回合保存一个批次（10局精选对战）")
+            print("   - 2局：最快胜利（步数最短的2局）")
+            print("   - 8局：随机抽取（不限胜负，展示多样性）\n")
             print("可用批次:")
 
             display_count = min(20, len(batches))
             for i, batch in enumerate(batches[:display_count]):
                 diff_name = DIFFICULTY_NAMES[batch['difficulty']] if batch['difficulty'] < len(DIFFICULTY_NAMES) else '?'
+                fastest_count = batch['win_count']  # 最快胜利
+                random_count = batch['loss_count']   # 随机抽取
                 print(f"  [{i:2d}] 回合 {batch['episode']:6d} | "
                       f"难度:{batch['difficulty']}[{diff_name}] | "
-                      f"{batch['win_count']}胜/{batch['loss_count']}负 | "
-                      f"平均步数: 胜{batch['avg_win_steps']:.0f} 负{batch['avg_loss_steps']:.0f}")
+                      f"{fastest_count}局最快+{random_count}局随机 | "
+                      f"平均步数: {batch['avg_win_steps']:.0f}/{batch['avg_loss_steps']:.0f}")
 
             if len(batches) > display_count:
                 print(f"  ... 还有 {len(batches) - display_count} 个批次")
@@ -1113,38 +1370,45 @@ def replay_trajectory():
             all_trajectories = wins + losses
             total_count = len(all_trajectories)
 
-            print(f"\n🎬 开始回放批次 ep{selected['episode']}")
-            print(f"   共 {total_count} 局（{len(wins)}胜 + {len(losses)}负/平）")
+            print(f"\n🎬 开始连续回放批次 ep{selected['episode']}")
+            print(f"   共 {total_count} 局（{len(wins)}局最快胜利 + {len(losses)}局随机）")
             print(f"   回放速度: {playback_speed}x")
-            print(f"\n   每局结束后按 Enter 继续，输入 q 退出")
+            print(f"\n   💡 空格=跳过当前局 | ESC/Q=退出回放")
             print("-" * 70)
 
-            # 先播放胜利局
-            if wins:
-                print(f"\n🏆 === 胜利局 ({len(wins)}局) ===")
-                for i, traj in enumerate(wins):
-                    if not play_single_trajectory(traj, i+1, len(wins), frame_delay):
-                        break
-                    if i < len(wins) - 1:
-                        if not wait_for_space():
-                            break
+            # 连续播放所有10局
+            quit_requested = False
+            for idx, traj in enumerate(all_trajectories):
+                # 显示当前是最快胜利还是随机抽取
+                if idx < len(wins):
+                    category = "🏆最快胜利"
+                else:
+                    category = "🎲随机"
 
-            # 询问是否继续看失败局
-            if losses:
-                print(f"\n💀 === 失败/平局 ({len(losses)}局) ===")
-                cont = input("继续观看失败/平局? [Y/n]: ").strip().lower()
-                if cont != 'n':
-                    for i, traj in enumerate(losses):
-                        if not play_single_trajectory(traj, i+1, len(losses), frame_delay):
-                            break
-                        if i < len(losses) - 1:
-                            if not wait_for_space():
-                                break
+                # 显示进度
+                print(f"\n[{idx+1}/{total_count}] {category}")
+
+                result = play_single_trajectory(traj, idx+1, total_count, frame_delay)
+
+                if result == 'quit':
+                    quit_requested = True
+                    break
+                elif result == 'skipped':
+                    # 跳过后继续下一局
+                    continue
+                else:
+                    # 正常完成，短暂暂停后继续
+                    if idx < total_count - 1:
+                        time.sleep(0.5)
+
+            if quit_requested:
+                print("\n退出回放模式")
+                break
 
             # 批次回放结束
             print("\n" + "=" * 70)
             print(f"✅ 批次 ep{selected['episode']} 回放完成!")
-            print(f"   胜利: {len(wins)}局 | 失败/平局: {len(losses)}局")
+            print(f"   最快胜利: {len(wins)}局 | 随机抽取: {len(losses)}局")
             print("=" * 70)
 
             # 询问是否继续

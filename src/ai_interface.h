@@ -49,13 +49,15 @@ extern GameState g_game;
  * @param width: 地图宽度（像素）
  * @param height: 地图高度（像素）
  * @param visualize: 是否启用可视化（0=纯逻辑，1=显示窗口）
+ * @param disable_vsync: 是否禁用垂直同步（0=启用60fps, 1=禁用无限帧率）
  * 功能：
  *   - 初始化全局游戏状态g_game
  *   - 如果visualize=1，初始化SDL渲染器
  *   - 设置随机种子
+ *   - 控制VSYNC：训练启用，回放禁用
  * 注意：整个训练过程只调用一次
  */
-void ai_init_env(int width, int height, int visualize);
+void ai_init_env(int width, int height, int visualize, int disable_vsync);
 
 /*
  * 重置环境为新回合（强化学习reset接口）
@@ -195,6 +197,32 @@ void ai_set_difficulty(int level);
  * 获取当前难度级别
  */
 int ai_get_difficulty();
+
+/*
+ * 设置随机种子（用于轨迹回放）
+ * @param seed: 随机种子值
+ * 功能：
+ *   - 设置C rand()的随机种子
+ *   - 确保每次reset时环境初始状态一致
+ * 用途：
+ *   - 轨迹回放：使用相同种子还原训练时的环境状态
+ */
+void ai_set_seed(unsigned int seed);
+
+/*
+ * 检测SDL按键事件（用于轨迹回放控制）
+ * @return: 按键代码
+ *   - 0: 无按键
+ *   - 32: 空格键（跳过当前局）
+ *   - 27: ESC键（退出）
+ *   - -1: 窗口关闭事件
+ * 功能：
+ *   - 轮询SDL事件队列
+ *   - 返回检测到的按键
+ * 用途：
+ *   - 轨迹回放：按空格跳过当前局
+ */
+int ai_poll_key();
 
 #ifdef __cplusplus
 }

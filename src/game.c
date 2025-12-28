@@ -188,8 +188,9 @@ void game_update(GameState* game) {
         bullet_update(&game->bullets[i], game->map_width, game->map_height);
     }
 
-    // 处理碰撞
-    handle_collisions(game->tanks, game->tank_count, game->bullets, MAX_BULLETS);
+    // 处理碰撞（传入地图尺寸用于边界检查，防止坦克被推进墙里）
+    handle_collisions(game->tanks, game->tank_count, game->bullets, MAX_BULLETS,
+                      game->map_width, game->map_height);
 
     // 检查游戏结束条件
     if (game->mode == MODE_PLAYER) {

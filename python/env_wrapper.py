@@ -52,7 +52,7 @@ class TankBattleEnv:
         env.close()
     """
 
-    def __init__(self, lib_path: str, width: int = 800, height: int = 600, visualize: bool = False):
+    def __init__(self, lib_path: str, width: int = 800, height: int = 600, visualize: bool = False, disable_vsync: bool = False):
         """
         初始化游戏环境
 
@@ -77,12 +77,16 @@ class TankBattleEnv:
             visualize: 是否开启可视化
                 - False: 纯后台运行，速度快（训练时）
                 - True: 显示SDL窗口，速度慢（调试/录像时）
+            disable_vsync: 是否禁用垂直同步
+                - False: 启用VSYNC，限制60fps（训练/对战时）
+                - True: 禁用VSYNC，支持任意帧率（回放时）
         """
         # 保存配置参数
         self.lib_path = lib_path
         self.width = width
         self.height = height
         self.visualize = visualize
+        self.disable_vsync = disable_vsync
 
         # ========== 加载C共享库 ==========
 
@@ -114,9 +118,10 @@ class TankBattleEnv:
         # - width: 地图宽度
         # - height: 地图高度
         # - visualize: 1=开启可视化, 0=关闭可视化
+        # - disable_vsync: 1=禁用垂直同步, 0=启用垂直同步
         #
-        # C函数签名: void ai_init_env(int width, int height, int visualize);
-        self.lib.ai_init_env(width, height, 1 if visualize else 0)
+        # C函数签名: void ai_init_env(int width, int height, int visualize, int disable_vsync);
+        self.lib.ai_init_env(width, height, 1 if visualize else 0, 1 if disable_vsync else 0)
 
         # ========== 状态空间和动作空间配置 ==========
 
@@ -154,13 +159,14 @@ class TankBattleEnv:
 
         # ========== ai_init_env: 初始化环境 ==========
 
-        # C函数原型: void ai_init_env(int width, int height, int visualize);
+        # C函数原型: void ai_init_env(int width, int height, int visualize, int disable_vsync);
         # 参数:
         # - width: 地图宽度（像素）
         # - height: 地图高度（像素）
         # - visualize: 是否可视化（1=是, 0=否）
+        # - disable_vsync: 是否禁用垂直同步（1=是, 0=否）
         # 返回值: 无
-        self.lib.ai_init_env.argtypes = [ctypes.c_int, ctypes.c_int, ctypes.c_int]
+        self.lib.ai_init_env.argtypes = [ctypes.c_int, ctypes.c_int, ctypes.c_int, ctypes.c_int]
         self.lib.ai_init_env.restype = None
 
         # ========== ai_reset_env: 重置环境 ==========
@@ -245,6 +251,47 @@ class TankBattleEnv:
         self.lib.ai_get_difficulty.argtypes = []
         self.lib.ai_get_difficulty.restype = ctypes.c_int
 
+        # ========== ai_set_seed: 设置随机种子 ==========
+        # C函数原型: void ai_set_seed(unsigned int seed);
+        # 参数:
+        # - seed: 随机种子值
+        # 作用: 设置C rand()的随机种子，确保环境初始状态可复现
+        self.lib.ai_set_seed.argtypes = [ctypes.c_uint]
+        self.lib.ai_set_seed.restype = None
+
+        # ========== ai_poll_key: 检测SDL按键事件 ==========
+        # C函数原型: int ai_poll_key();
+        # 返回值:
+        # - 0: 无按键
+        # - 32: 空格键（跳过当前局）
+        # - 27: ESC键（退出）
+        # - -1: 窗口关闭事件
+        self.lib.ai_poll_key.argtypes = []
+        self.lib.ai_poll_key.restype = ctypes.c_int
+
+    def set_seed(self, seed: int):
+        """
+        设置随机种子（用于轨迹回放）
+
+        用途：
+        - 轨迹回放：使用相同种子还原训练时的环境初始状态
+        - 确保回放时敌人位置和训练时一致
+        """
+        self.lib.ai_set_seed(seed)
+
+    def poll_key(self) -> int:
+        """
+        检测SDL按键事件（用于轨迹回放控制）
+
+        Returns:
+            按键代码:
+            - 0: 无按键
+            - 32: 空格键（跳过当前局）
+            - 27: ESC键（退出）
+            - -1: 窗口关闭事件
+        """
+        return self.lib.ai_poll_key()
+
     def set_difficulty(self, level: int):
         """
         设置敌人AI难度级别（课程学习核心）
@@ -267,15 +314,16 @@ class TankBattleEnv:
         """获取当前难度级别"""
         return self.lib.ai_get_difficulty()
 
-    def reset(self, enemy_count: int = 2) -> np.ndarray:
+    def reset(self, enemy_count: int = 2, seed: int = None) -> np.ndarray:
         """
         重置环境（开始新的一局游戏）
 
         重置流程:
-        1. 清除所有实体（坦克、子弹）
-        2. 重置AI坦克到初始位置
-        3. 根据enemy_count生成敌人
-        4. 返回初始状态观测
+        1. （可选）设置随机种子
+        2. 清除所有实体（坦克、子弹）
+        3. 重置AI坦克到初始位置
+        4. 根据enemy_count生成敌人
+        5. 返回初始状态观测
 
         为什么需要reset?
         - 每局游戏结束后需要重新开始
@@ -287,6 +335,9 @@ class TankBattleEnv:
                 - 范围: 1-5（状态表示支持最多5个敌人）
                 - 课程学习: 从1个开始，逐步增加
                 - 默认: 2个（适中难度）
+            seed: 随机种子（可选）
+                - 用于轨迹回放，确保环境初始状态一致
+                - 默认: None（使用系统随机种子）
 
         Returns:
             初始状态向量
@@ -298,7 +349,12 @@ class TankBattleEnv:
         示例:
             state = env.reset(enemy_count=1)  # 1个敌人的简单模式
             state = env.reset(enemy_count=5)  # 5个敌人的困难模式
+            state = env.reset(enemy_count=1, seed=12345)  # 使用固定种子（回放用）
         """
+        # 如果指定了种子，设置随机种子
+        if seed is not None:
+            self.lib.ai_set_seed(seed)
+
         # 创建观测数组（C代码会填充这个数组）
         # zeros: 初始化为全0
         # state_dim: 数组长度=43
